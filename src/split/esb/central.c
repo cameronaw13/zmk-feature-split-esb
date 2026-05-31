@@ -30,31 +30,21 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_SPLIT_ESB_LOG_LEVEL);
 #include "app_esb.h"
 #include "common.h"
 
-#define RX_BUFFER_SIZE                                                                             \
-    ((sizeof(struct esb_event_envelope) + sizeof(struct esb_msg_postfix)) *                        \
-     CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS)
-#define TX_BUFFER_SIZE                                                                             \
-    ((sizeof(struct esb_command_envelope) + sizeof(struct esb_msg_postfix)) *                      \
-     CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS)
+#define RX_BUFFER_SIZE (sizeof(struct esb_event_envelope) + sizeof(struct esb_msg_postfix))
+#define TX_BUFFER_SIZE (sizeof(struct esb_command_envelope) + sizeof(struct esb_msg_postfix))
 
-RING_BUF_DECLARE(rx_buf, RX_BUFFER_SIZE);
-RING_BUF_DECLARE(tx_buf, TX_BUFFER_SIZE);
-
-static K_SEM_DEFINE(esb_send_cmd_sem, 1, 1);
-
-static uint16_t cmd_message_id = 0;
+RING_BUF_DECLARE(rx_buf, RX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS);
+RING_BUF_DECLARE(tx_buf, TX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS);
 
 static void publish_events_work(struct k_work *work);
-
 K_WORK_DEFINE(publish_events, publish_events_work);
 
-uint8_t async_rx_buf[RX_BUFFER_SIZE / 2][2];
+static void process_rx_cb(void);
+K_MSGQ_DEFINE(evt_msg_queue, sizeof(struct esb_event_payload), 
+    CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS, 4);
 
 static struct zmk_split_esb_async_state async_state = {
-    .process_tx_work = &publish_events,
-    .rx_bufs = {async_rx_buf[0], async_rx_buf[1]},
-    .rx_bufs_len = RX_BUFFER_SIZE / 2,
-    .rx_size_process_trigger = ESB_MSG_EXTRA_SIZE + 1,
+    .process_rx_callback = process_rx_cb,
     .rx_buf = &rx_buf,
     .tx_buf = &tx_buf,
 };
@@ -87,16 +77,6 @@ static int split_central_esb_send_command(uint8_t source,
         return data_size;
     }
 
-    // lock it for a safe result from ring_buf_space_get()
-    // NOTE: esb_send_cmd_sem is safe:
-    // - Called from application thread, not ISR
-    // - begin_tx() releases semaphore before returning
-    int ret = k_sem_take(&esb_send_cmd_sem, K_FOREVER);
-    if (ret) {
-        LOG_WRN("Shouldn't be called FOREVER");
-        return 0;
-    }
-
     // Data + type + source
     size_t payload_size =
         data_size + sizeof(source) + sizeof(enum zmk_split_transport_central_command_type);
@@ -105,7 +85,6 @@ static int split_central_esb_send_command(uint8_t source,
         LOG_WRN("No room to send command to the peripheral %d (have %d but only space for %d/%d)", 
                 source, ESB_MSG_EXTRA_SIZE + payload_size, ring_buf_space_get(&tx_buf),
                 ring_buf_capacity_get(&tx_buf));
-        k_sem_give(&esb_send_cmd_sem);
         return -ENOSPC;
     }
 
@@ -133,10 +112,14 @@ static int split_central_esb_send_command(uint8_t source,
         LOG_WRN("Failed to put the postfix (%d vs %d)", put, sizeof(postfix));
     }
 
-    if (++cmd_message_id == 0) {
+    static uint16_t cmd_message_id = 0;
+    if (++cmd_message_id >= UINT16_MAX - 1000) {
         cmd_message_id = 1;
     }
-    struct esb_msg_meta meta = {.message_id = cmd_message_id, .max_retry = CONFIG_ZMK_SPLIT_ESB_RETRY_CMD};
+    // LOG_DBG("evt #: %d", cmd_message_id);
+
+    uint8_t max_retry = CONFIG_ZMK_SPLIT_ESB_RETRY_CMD;
+    struct esb_msg_meta meta = {.message_id = cmd_message_id, .max_retry = max_retry};
 
     put = ring_buf_put(&tx_buf, (uint8_t *)&meta, sizeof(meta));
     if (put != sizeof(meta)) {
@@ -145,7 +128,6 @@ static int split_central_esb_send_command(uint8_t source,
 
     begin_tx();
 
-    k_sem_give(&esb_send_cmd_sem);
     return 0;
 }
 
@@ -213,21 +195,36 @@ static int zmk_split_esb_central_init(void) {
 
 SYS_INIT(zmk_split_esb_central_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
-static void publish_events_work(struct k_work *work) {
+static void process_rx_cb(void) {
     while (ring_buf_size_get(&rx_buf) > ESB_MSG_EXTRA_SIZE) {
         struct esb_event_envelope env;
         int item_err =
             zmk_split_esb_get_item(&rx_buf, (uint8_t *)&env, sizeof(struct esb_event_envelope));
         switch (item_err) {
         case 0:
-            zmk_split_transport_central_peripheral_event_handler(&esb_central, env.payload.source,
-                                                                 env.payload.event);
+            int ret = k_msgq_put(&evt_msg_queue, &env.payload, K_NO_WAIT);
+            if (ret < 0) {
+                LOG_WRN("Failed to queue event for processing (%d)", ret);
+                continue;
+            }
+
+            k_work_submit(&publish_events);
+
             break;
         case -EAGAIN:
             return;
         default:
-            LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
+            // LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
             return;
         }
+    }
+}
+
+static void publish_events_work(struct k_work *work) {
+    struct esb_event_payload payload;
+
+    while (k_msgq_get(&evt_msg_queue, &payload, K_NO_WAIT) >= 0) {
+        zmk_split_transport_central_peripheral_event_handler(
+            &esb_central, payload.source, payload.event);
     }
 }

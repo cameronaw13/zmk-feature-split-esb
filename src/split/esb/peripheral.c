@@ -30,36 +30,23 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_SPLIT_ESB_LOG_LEVEL);
 #include "app_esb.h"
 #include "common.h"
 
-#define TX_BUFFER_SIZE                                                                             \
-    ((sizeof(struct esb_event_envelope) + sizeof(struct esb_msg_postfix) + sizeof(struct esb_msg_meta)) * \
-     CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS)
-#define RX_BUFFER_SIZE                                                                             \
-    ((sizeof(struct esb_command_envelope) + sizeof(struct esb_msg_postfix)) *                      \
-     CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS)
+#define TX_BUFFER_SIZE (sizeof(struct esb_event_envelope) + sizeof(struct esb_msg_postfix) + sizeof(struct esb_msg_meta))
+#define RX_BUFFER_SIZE (sizeof(struct esb_command_envelope) + sizeof(struct esb_msg_postfix))
 
-RING_BUF_DECLARE(chosen_rx_buf, RX_BUFFER_SIZE);
-RING_BUF_DECLARE(chosen_tx_buf, TX_BUFFER_SIZE);
-
-static K_SEM_DEFINE(esb_send_evt_sem, 1, 1);
-
-static uint16_t message_id = 0;
+RING_BUF_DECLARE(chosen_rx_buf, RX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS);
+RING_BUF_DECLARE(chosen_tx_buf, TX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS);
 
 static const uint8_t peripheral_id = CONFIG_ZMK_SPLIT_ESB_PERIPHERAL_ID;
 
 static void publish_commands_work(struct k_work *work);
-
 K_WORK_DEFINE(publish_commands, publish_commands_work);
 
-static void process_tx_cb(void);
-K_MSGQ_DEFINE(cmd_msg_queue, sizeof(struct zmk_split_transport_central_command), 3, 4);
-
-uint8_t async_rx_buf[RX_BUFFER_SIZE / 2][2];
+static void process_rx_cb(void);
+K_MSGQ_DEFINE(cmd_msg_queue, sizeof(struct zmk_split_transport_central_command), 
+    CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS, 4);
 
 static struct zmk_split_esb_async_state async_state = {
-    .rx_bufs = {async_rx_buf[0], async_rx_buf[1]},
-    .rx_bufs_len = RX_BUFFER_SIZE / 2,
-    .rx_size_process_trigger = sizeof(struct esb_command_envelope),
-    .process_tx_callback = process_tx_cb,
+    .process_rx_callback = process_rx_cb,
     .rx_buf = &chosen_rx_buf,
     .tx_buf = &chosen_tx_buf,
 };
@@ -110,16 +97,6 @@ split_peripheral_esb_report_event(const struct zmk_split_transport_peripheral_ev
         return data_size;
     }
 
-    // lock it for a safe result from ring_buf_space_get()
-    // NOTE: esb_send_evt_sem is safe:
-    // - Called from application thread, not ISR
-    // - begin_tx() releases semaphore before returning
-    int ret = k_sem_take(&esb_send_evt_sem, K_FOREVER);
-    if (ret) {
-        LOG_WRN("Shouldn't be called FOREVER");
-        return 0;
-    }
-
     // Data + type + source
     size_t payload_size =
         data_size + sizeof(peripheral_id) + sizeof(enum zmk_split_transport_peripheral_event_type);
@@ -128,7 +105,6 @@ split_peripheral_esb_report_event(const struct zmk_split_transport_peripheral_ev
         LOG_WRN("No room to send peripheral to the central (have %d but only space for %d/%d)",
                 ESB_MSG_EXTRA_SIZE + payload_size, ring_buf_space_get(&chosen_tx_buf),
                 ring_buf_capacity_get(&chosen_tx_buf));
-        k_sem_give(&esb_send_evt_sem);
         return -ENOSPC;
     }
 
@@ -157,11 +133,14 @@ split_peripheral_esb_report_event(const struct zmk_split_transport_peripheral_ev
     }
     // LOG_HEXDUMP_DBG(&postfix, sizeof(postfix), "postfix");
 
-    uint8_t max_retry = get_retry_count(event);
-    if (++message_id == 0) {
-        message_id = 1;
+    static uint16_t evt_message_id = 0;
+    if (++evt_message_id >= UINT16_MAX - 1000) {
+        evt_message_id = 1;
     }
-    struct esb_msg_meta meta = {.message_id = message_id, .max_retry = max_retry};
+    // LOG_DBG("evt #: %d", evt_message_id);
+
+    uint8_t max_retry = get_retry_count(event);
+    struct esb_msg_meta meta = {.message_id = evt_message_id, .max_retry = max_retry};
 
     put = ring_buf_put(&chosen_tx_buf, (uint8_t *)&meta, sizeof(meta));
     if (put != sizeof(meta)) {
@@ -171,7 +150,6 @@ split_peripheral_esb_report_event(const struct zmk_split_transport_peripheral_ev
 
     begin_tx();
 
-    k_sem_give(&esb_send_evt_sem);
     return 0;
 }
 
@@ -229,7 +207,7 @@ static int zmk_split_esb_peripheral_init(void) {
 
 SYS_INIT(zmk_split_esb_peripheral_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
-static void process_tx_cb(void) {
+static void process_rx_cb(void) {
     while (ring_buf_size_get(&chosen_rx_buf) > ESB_MSG_EXTRA_SIZE) {
         struct esb_command_envelope env;
         int item_err = zmk_split_esb_get_item(&chosen_rx_buf, (uint8_t *)&env,
@@ -238,26 +216,28 @@ static void process_tx_cb(void) {
         case 0:
             if (env.payload.cmd.type == ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_POLL_EVENTS) {
                 begin_tx();
-            } else {
-                if (env.payload.source != peripheral_id) {
-                    LOG_WRN("Ignoring command type %d for source %d (expect %d)", 
-                            env.payload.cmd.type, env.payload.source, peripheral_id);
-                    continue;
-                }
-
-                int ret = k_msgq_put(&cmd_msg_queue, &env.payload.cmd, K_NO_WAIT);
-                if (ret < 0) {
-                    LOG_WRN("Failed to queue command for processing (%d)", ret);
-                    continue;
-                }
-
-                k_work_submit(&publish_commands);
+                break;
             }
+
+            if (env.payload.source != peripheral_id) {
+                LOG_WRN("Ignoring command type %d for source %d (expect %d)", 
+                        env.payload.cmd.type, env.payload.source, peripheral_id);
+                continue;
+            }
+
+            int ret = k_msgq_put(&cmd_msg_queue, &env.payload.cmd, K_NO_WAIT);
+            if (ret < 0) {
+                LOG_WRN("Failed to queue command for processing (%d)", ret);
+                continue;
+            }
+
+            k_work_submit(&publish_commands);
+
             break;
         case -EAGAIN:
             return;
         default:
-            LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
+            // LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
             continue;
         }
     }

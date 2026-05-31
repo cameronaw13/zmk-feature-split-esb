@@ -50,25 +50,13 @@ struct esb_msg_meta {
 
 #define ESB_MSG_EXTRA_SIZE (sizeof(struct esb_msg_prefix) + sizeof(struct esb_msg_postfix) + sizeof(struct esb_msg_meta))
 
-typedef void (*zmk_split_esb_process_tx_callback_t)(void);
+typedef void (*zmk_split_esb_process_rx_callback_t)(void);
 
 struct zmk_split_esb_async_state {
     atomic_t state;
-
-    uint8_t *rx_bufs[2];
-    size_t rx_bufs_len;
-    size_t rx_size_process_trigger;
-
+    zmk_split_esb_process_rx_callback_t process_rx_callback;
     struct ring_buf *tx_buf;
     struct ring_buf *rx_buf;
-
-    zmk_split_esb_process_tx_callback_t process_tx_callback;
-
-    const struct device *uart;
-
-    struct k_work_delayable restart_rx_work;
-    struct k_work *process_tx_work;
-    const struct gpio_dt_spec *dir_gpio;
 };
 
 void zmk_split_esb_async_tx(struct zmk_split_esb_async_state *state);

@@ -22,7 +22,10 @@ void zmk_split_esb_async_tx(struct zmk_split_esb_async_state *state) {
         return;
     }
     // Need at least prefix + postfix + meta
-    if (tx_buf_len < sizeof(struct esb_msg_prefix) + sizeof(struct esb_msg_postfix) + sizeof(struct esb_msg_meta)) {
+    if (tx_buf_len < sizeof(struct esb_msg_prefix) 
+    + sizeof(struct esb_msg_postfix) 
+    + sizeof(struct esb_msg_meta)
+    ) {
         return;
     }
     // LOG_DBG("tx_buf_len: %d", tx_buf_len);
@@ -90,7 +93,7 @@ void zmk_split_esb_cb(app_esb_event_t *event, struct zmk_split_esb_async_state *
             }
 
             if (ring_buf_space_get(state->rx_buf) < event->data_length) {
-                LOG_WRN("No room to receive from peripheral (have %d but only space for %d/%d)",
+                LOG_WRN("No room to receive (have %d but only space for %d/%d)",
                         event->data_length, ring_buf_space_get(state->rx_buf), 
                         ring_buf_capacity_get(state->rx_buf));
                 k_sem_give(&esb_cb_sem);
@@ -107,10 +110,8 @@ void zmk_split_esb_cb(app_esb_event_t *event, struct zmk_split_esb_async_state *
             k_sem_give(&esb_cb_sem);
 
             // LOG_DBG("RX + %3d and now buffer is %3d", received, ring_buf_size_get(state->rx_buf));
-            if (state->process_tx_callback) {
-                state->process_tx_callback();
-            } else if (state->process_tx_work) {
-                k_work_submit(state->process_tx_work);
+            if (state->process_rx_callback) {
+                state->process_rx_callback();
             }
 
             break;
@@ -134,30 +135,16 @@ int zmk_split_esb_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_siz
 
         if (memcmp(&prefix.magic_prefix, &ZMK_SPLIT_ESB_ENVELOPE_MAGIC_PREFIX,
                    sizeof(prefix.magic_prefix)) != 0) {
-
-            /*** auto-healing is not working, keep for reference only ***/
-            // reset_count++;
-            // if (reset_count > 3) {
-            //     LOG_WRN("Multiple prefix mismatches, resetting buffer");
-            //     ring_buf_reset(rx_buf);
-            //     reset_count = 0;
-            // } else {
-            //     uint8_t dummy;
-            //     ring_buf_get(rx_buf, &dummy, 1);
-            //     LOG_WRN("Prefix mismatch, discarding byte %02x", dummy);
-            // }
-            /*** ****/
             LOG_WRN("Multiple prefix mismatches, resetting buffer");
             ring_buf_reset(rx_buf);
-
             return -EINVAL;
         }
 
         size_t payload_to_read = sizeof(prefix) + prefix.payload_size;
 
         if (payload_to_read > env_size) {
-            LOG_WRN("Invalid message with payload %d bigger than expected max %d", payload_to_read,
-                    env_size);
+            LOG_WRN("Invalid message with payload %d bigger than expected max %d", 
+                payload_to_read, env_size);
             ring_buf_reset(rx_buf);
             return -EINVAL;
         }
