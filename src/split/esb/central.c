@@ -85,6 +85,7 @@ static int split_central_esb_send_command(uint8_t source,
         LOG_WRN("No room to send command to the peripheral %d (have %d but only space for %d/%d)", 
                 source, ESB_MSG_EXTRA_SIZE + payload_size, ring_buf_space_get(&tx_buf),
                 ring_buf_capacity_get(&tx_buf));
+        ring_buf_reset(&tx_buf);
         return -ENOSPC;
     }
 
@@ -198,8 +199,8 @@ SYS_INIT(zmk_split_esb_central_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DE
 static void process_rx_cb(void) {
     while (ring_buf_size_get(&rx_buf) > ESB_MSG_EXTRA_SIZE) {
         struct esb_event_envelope env;
-        int item_err =
-            zmk_split_esb_get_item(&rx_buf, (uint8_t *)&env, sizeof(struct esb_event_envelope));
+        int item_err = zmk_split_esb_get_item(&rx_buf, (uint8_t *)&env, 
+                                              sizeof(struct esb_event_envelope));
         switch (item_err) {
         case 0:
             int ret = k_msgq_put(&evt_msg_queue, &env.payload, K_NO_WAIT);
@@ -215,7 +216,7 @@ static void process_rx_cb(void) {
             return;
         default:
             // LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
-            return;
+            continue;
         }
     }
 }

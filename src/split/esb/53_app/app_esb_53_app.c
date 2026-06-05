@@ -229,8 +229,7 @@ NRF_RPC_CBOR_EVT_DECODER(esb_group, rx_cb_handler, RPC_EVENT_ESB_CB, rpc_esb_eve
 static void err_handler(const struct nrf_rpc_err_report *report)
 {
     LOG_ERR("nRF RPC error %d. Enable nRF RPC logs for details.", report->code);
-
-    k_oops();
+    // k_oops();
 }
 
 static int serialization_init(void)

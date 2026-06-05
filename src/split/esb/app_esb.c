@@ -207,10 +207,6 @@ static void event_handler(struct esb_evt const *event) {
             break;
         case ESB_EVENT_RX_RECEIVED:
             // LOG_DBG("RX SUCCESS");
-            // NOTE: Stack buffer is safe here because:
-            // 1. event_handler is called from RADIO ISR context (not parallel)
-            // 2. m_callback executes synchronously within the same ISR
-            // 3. zmk_split_esb_cb processes event immediately, no deferral
             struct esb_payload rx_payload;
             while (esb_read_rx_payload(&rx_payload) == 0) {
                 // LOG_DBG("Chunk %d, len: %d", rx_payload.pid, rx_payload.length);
@@ -320,18 +316,6 @@ static int pull_packet_from_tx_msgq(void) {
 
         if (ret == -ENOMEM) {
             // LOG_WRN("esb_tx_fifo: queue full %d", que_was_fulled);
-
-            // *** deprecated pre-emptive queuing logic ***
-            // LOG_DBG("esb_tx_fifo: queue full, popping first message and queueing again");
-            // ret = esb_pop_tx();
-            // if (ret) {
-            //     LOG_ERR("esb_tx_fifo: popping first message and queueing failed (%d)", ret);
-            // }
-            // ret = esb_write_payload(&tx_payload);
-            // if (ret) {
-            //     LOG_ERR("esb_write_payload failed (%d)", ret);
-            // }
-
             // force dequeue, guarding for phantom PRX.
             que_was_fulled++;
             if (que_was_fulled >= ESB_TX_FIFO_REQUE_MAX) {
@@ -435,9 +419,13 @@ int zmk_split_esb_send(app_esb_data_t *tx_packet) {
             m_msgq_full_last_time = now;
         }
         if (now - m_msgq_full_last_time > CONFIG_ZMK_SPLIT_ESB_MSGQ_FULL_TIMEOUT_MS) {
-            LOG_WRN("Msgq full for %dms, clearing msgq and retry table", CONFIG_ZMK_SPLIT_ESB_MSGQ_FULL_TIMEOUT_MS);
+            LOG_WRN("Msgq full for %dms, clearing msgq and retry table", 
+                CONFIG_ZMK_SPLIT_ESB_MSGQ_FULL_TIMEOUT_MS);
             k_msgq_purge(&m_msgq_tx_payloads);
             clear_retry_table();
+            if (m_active) {
+                esb_flush_tx(); 
+            }
             m_msgq_full_last_time = 0;
         }
     } else {
@@ -461,7 +449,7 @@ static int app_esb_suspend(void) {
 
         NRF_RADIO->EVENTS_DISABLED = 0;
         NRF_RADIO->TASKS_DISABLE = 1;
-        while(NRF_RADIO->EVENTS_DISABLED == 0);
+        while (NRF_RADIO->EVENTS_DISABLED == 0);
 
         NRF_TIMER2->TASKS_STOP = 1;
         NRF_RADIO->INTENCLR = 0xFFFFFFFF;

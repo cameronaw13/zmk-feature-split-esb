@@ -82,32 +82,18 @@ void zmk_split_esb_cb(app_esb_event_t *event, struct zmk_split_esb_async_state *
         case APP_ESB_EVT_RX:
             // LOG_DBG("ESB RX received: %d", event->data_length);
 
-            // lock it for a safe result from ring_buf_space_get()
-            // NOTE: esb_cb_sem is safe in ISR context:
-            // - Called from event_handler in RADIO ISR (single-threaded)
-            // - Zephyr treats K_FOREVER as non-blocking in ISR
-            int ret = k_sem_take(&esb_cb_sem, K_FOREVER);
-            if (ret) {
-                LOG_WRN("Shouldn't be called FOREVER");
-                break;
-            }
-
             if (ring_buf_space_get(state->rx_buf) < event->data_length) {
                 LOG_WRN("No room to receive (have %d but only space for %d/%d)",
                         event->data_length, ring_buf_space_get(state->rx_buf), 
                         ring_buf_capacity_get(state->rx_buf));
-                k_sem_give(&esb_cb_sem);
                 break;
             }
 
             size_t received = ring_buf_put(state->rx_buf, event->buf, event->data_length);
             if (received < event->data_length) {
                 LOG_ERR("RX overrun! %d < %d", received, event->data_length);
-                k_sem_give(&esb_cb_sem);
                 break;
             }
-
-            k_sem_give(&esb_cb_sem);
 
             // LOG_DBG("RX + %3d and now buffer is %3d", received, ring_buf_size_get(state->rx_buf));
             if (state->process_rx_callback) {
@@ -122,9 +108,7 @@ void zmk_split_esb_cb(app_esb_event_t *event, struct zmk_split_esb_async_state *
 }
 
 int zmk_split_esb_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_size) {
-    // static uint8_t reset_count = 0;
-
-    // RX buffer only has prefix + postfix (no meta on receiver side)
+    // RX buffer only has prefix + postfix
     while (ring_buf_size_get(rx_buf) > sizeof(struct esb_msg_prefix) + sizeof(struct esb_msg_postfix)) {
         struct esb_msg_prefix prefix;
 
@@ -137,6 +121,12 @@ int zmk_split_esb_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_siz
                    sizeof(prefix.magic_prefix)) != 0) {
             LOG_WRN("Multiple prefix mismatches, resetting buffer");
             ring_buf_reset(rx_buf);
+
+            // // LOG_WRN("Prefix mismatch, skipping 1 byte to realign");
+            // // Drop a single byte to let the stream re-align
+            // uint8_t dummy;
+            // ring_buf_get(rx_buf, &dummy, 1);
+
             return -EINVAL;
         }
 
@@ -172,11 +162,9 @@ int zmk_split_esb_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_siz
         if (crc != postfix.crc) {
             LOG_WRN("Data corruption in received peripheral event, resetting buffer (%d vs %d)",
                     crc, postfix.crc);
-            ring_buf_reset(rx_buf);
             return -EINVAL;
         }
 
-        // reset_count = 0;
         return 0;
     }
 

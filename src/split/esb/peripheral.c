@@ -102,9 +102,10 @@ split_peripheral_esb_report_event(const struct zmk_split_transport_peripheral_ev
         data_size + sizeof(peripheral_id) + sizeof(enum zmk_split_transport_peripheral_event_type);
 
     if (ring_buf_space_get(&chosen_tx_buf) < ESB_MSG_EXTRA_SIZE + payload_size) {
-        LOG_WRN("No room to send peripheral to the central (have %d but only space for %d/%d)",
+        LOG_WRN("No room to send event to the central (have %d but only space for %d/%d)",
                 ESB_MSG_EXTRA_SIZE + payload_size, ring_buf_space_get(&chosen_tx_buf),
                 ring_buf_capacity_get(&chosen_tx_buf));
+        ring_buf_reset(&chosen_tx_buf);
         return -ENOSPC;
     }
 
@@ -211,7 +212,7 @@ static void process_rx_cb(void) {
     while (ring_buf_size_get(&chosen_rx_buf) > ESB_MSG_EXTRA_SIZE) {
         struct esb_command_envelope env;
         int item_err = zmk_split_esb_get_item(&chosen_rx_buf, (uint8_t *)&env,
-                                                sizeof(struct esb_command_envelope));
+                                              sizeof(struct esb_command_envelope));
         switch (item_err) {
         case 0:
             if (env.payload.cmd.type == ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_POLL_EVENTS) {

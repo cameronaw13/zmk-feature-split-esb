@@ -18,10 +18,10 @@
 LOG_MODULE_REGISTER(timeslot, CONFIG_ZMK_SPLIT_ESB_LOG_LEVEL);
 
 
-#define TIMESLOT_REQUEST_TIMEOUT_US  1000000
-#define TIMESLOT_LENGTH_US           10000
-#define TIMESLOT_EXT_MARGIN_MARGIN	 1000
-#define TIMESLOT_REQ_EARLIEST_MARGIN 100
+#define TIMESLOT_REQUEST_TIMEOUT_US  1000000 // 1000 ms (1 second timeout to grant the slot)
+#define TIMESLOT_LENGTH_US           10000   // 10 ms (duration of the active radio window)
+#define TIMESLOT_EXT_MARGIN_MARGIN   4000    // 4 ms (headroom allocated for the extension request)
+#define TIMESLOT_REQ_EARLIEST_MARGIN 2000    // 2 ms (Generous safety margin to submit a new slot request)
 #define TIMER_EXPIRY_US_EARLY 		 (TIMESLOT_LENGTH_US - MPSL_TIMESLOT_EXTENSION_MARGIN_MIN_US - TIMESLOT_EXT_MARGIN_MARGIN)
 #define TIMER_EXPIRY_REQ			 (TIMESLOT_LENGTH_US - MPSL_TIMESLOT_EXTENSION_MARGIN_MIN_US - TIMESLOT_REQ_EARLIEST_MARGIN)
 
@@ -55,7 +55,7 @@ static mpsl_timeslot_request_t timeslot_request_earliest = {
 static mpsl_timeslot_signal_return_param_t signal_callback_return_param;
 
 // Message queue for requesting MPSL API calls to non-preemptible thread
-K_MSGQ_DEFINE(mpsl_api_msgq, sizeof(enum mpsl_timeslot_call), 10, 4);
+K_MSGQ_DEFINE(mpsl_api_msgq, sizeof(enum mpsl_timeslot_call), 256, 4);
 
 static void schedule_request(enum mpsl_timeslot_call call) {
     int err;
@@ -66,10 +66,10 @@ static void schedule_request(enum mpsl_timeslot_call call) {
         m_sess_open = false;
     }
     enum mpsl_timeslot_call api_call = call;
-    err = k_msgq_put(&mpsl_api_msgq, &api_call, K_NO_WAIT);
+    err = k_msgq_put(&mpsl_api_msgq, &api_call, K_MSEC(1));
     if (err) {
         LOG_ERR("Message sent error: %d", err);
-        k_oops();
+        // k_oops();
     }
 }
 
@@ -249,8 +249,16 @@ static mpsl_timeslot_signal_return_param_t *mpsl_timeslot_callback(mpsl_timeslot
             break;
 
         default:
-            LOG_ERR("unexpected signal: %u", signal_type);
-            k_oops();
+            LOG_WRN("Unhandled MPSL signal: %u. Closing timeslot.", signal_type);
+    
+            // Cleanly instruct MPSL to end the current timeslot action
+            signal_callback_return_param.callback_action = MPSL_TIMESLOT_SIGNAL_ACTION_END;
+            p_ret_val = &signal_callback_return_param;
+            set_timeslot_active_status(false);
+            
+            // queue a recovery request to try again fresh later
+            schedule_request(REQ_MAKE_REQUEST);
+
             break;
     }
     // NRF_P0->OUTCLR = BIT(28);
@@ -275,29 +283,37 @@ static void mpsl_nonpreemptible_thread(void) {
                     LOG_DBG("req open");
                     err = mpsl_timeslot_session_open(mpsl_timeslot_callback, &session_id);
                     if (err) {
-                        LOG_ERR("Timeslot session open error: %d", err);
-                        k_oops();
+                        LOG_WRN("Timeslot open failed (%d), retrying in 50ms...", err);
+                        k_sleep(K_MSEC(50));
+                        schedule_request(REQ_OPEN_SESSION); // Put back in queue to try again
                     }
                     break;
                 case REQ_MAKE_REQUEST:
                     LOG_DBG("req request");
                     err = mpsl_timeslot_request(session_id, &timeslot_request_earliest);
                     if (err) {
-                        LOG_ERR("Timeslot request error: %d", err);
-                        k_oops();
+                        LOG_WRN("Timeslot request rejected (%d). Radio busy, backing off...", err);
+                        // If the session ID became invalid, force a clean restart cycle
+                        if (err == -NRF_EFAULT || err == -NRF_EAGAIN) {
+                            mpsl_timeslot_session_close(session_id);
+                            schedule_request(REQ_OPEN_SESSION);
+                        } else {
+                            k_sleep(K_MSEC(10)); // Back off 10ms before trying to ask again
+                            schedule_request(REQ_MAKE_REQUEST);
+                        }
                     }
                     break;
                 case REQ_CLOSE_SESSION:
                     LOG_DBG("req close");
                     err = mpsl_timeslot_session_close(session_id);
                     if (err) {
-                        LOG_ERR("Timeslot session close error: %d", err);
-                        k_oops();
+                        LOG_WRN("Timeslot close warning: %d. Forcing session reset.", err);
+                        session_id = 0xFFu; // Force clear the local tracker anyway
+                        m_sess_open = false;
                     }
                     break;
                 default:
-                    LOG_ERR("Wrong timeslot API call");
-                    k_oops();
+                    LOG_WRN("Invalid background thread API call skipped.");
                     break;
             }
             //NRF_P0->OUTCLR = BIT(29);
@@ -321,3 +337,22 @@ void zmk_split_esb_timeslot_init(zmk_split_esb_timeslot_callback_t callback) {
 K_THREAD_DEFINE(mpsl_nonpreemptible_thread_id, STACKSIZE,
         mpsl_nonpreemptible_thread, NULL, NULL, NULL,
         K_PRIO_COOP(MPSL_THREAD_PRIO), 0, 0);
+
+#if IS_ENABLED(CONFIG_MPSL_ASSERT_HANDLER)
+
+void mpsl_assert_handle(const char *file, int line) {
+    LOG_ERR("!!!! MPSL CRITICAL ASSERT !!!!");
+	printk("MPSL ASSERT: %s, %d\n", file, line);
+	printk("\n");
+
+    // keep register state for coredump
+    // while(1) { k_sleep(K_MSEC(250)); }
+
+    // #if defined(CONFIG_DEBUG)
+    //     __builtin_trap(); 
+    // #else
+    //     sys_reboot(SYS_REBOOT_COLD);
+    // #endif
+}
+
+#endif /* IS_ENABLED(CONFIG_MPSL_ASSERT_HANDLER) */
