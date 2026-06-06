@@ -69,13 +69,12 @@ static void clear_retry_table(void) {
         entry->left = 0;
         entry->max = 0;
         entry->payload.length = 0;
-    }
-    m_current_tx_msg_id = 0;
+    }    
 }
 
-static int find_retry_by_msg_id(uint16_t message_id) {
+static int find_retry_by_msg_id(uint16_t msg_id) {
     for (int i = 0; i < CONFIG_ZMK_SPLIT_ESB_PROTO_MSGQ_ITEMS; i++) {
-        if (m_retry_table[i].msg_id == message_id) {
+        if (m_retry_table[i].msg_id == msg_id) {
             return i;
         }
     }
@@ -86,11 +85,11 @@ static int find_empty_retry_slot(void) {
     return find_retry_by_msg_id(0);
 }
 
-static int add_retry_entry(uint16_t message_id, uint8_t max, struct esb_payload *payload) {
+static int add_retry_entry(uint16_t msg_id, uint8_t max, struct esb_payload *payload) {
     int idx = find_empty_retry_slot();
     if (idx >= 0) {
         struct retry_entry *entry = &m_retry_table[idx];
-        entry->msg_id = message_id;
+        entry->msg_id = msg_id;
         entry->left = max;
         entry->max = max;
         if (max && payload) {
@@ -105,8 +104,8 @@ static int add_retry_entry(uint16_t message_id, uint8_t max, struct esb_payload 
     return idx;
 }
 
-static void remove_retry_entry_by_msg_id(uint16_t message_id) {
-    int idx = find_retry_by_msg_id(message_id);
+static void remove_retry_entry_by_msg_id(uint16_t msg_id) {
+    int idx = find_retry_by_msg_id(msg_id);
     if (idx >= 0) {
         struct retry_entry *entry = &m_retry_table[idx];
         if (entry->max > 0) {
@@ -118,21 +117,21 @@ static void remove_retry_entry_by_msg_id(uint16_t message_id) {
     }
 }
 
-static uint8_t get_retry_left_by_msg_id(uint16_t message_id) {
-    int idx = find_retry_by_msg_id(message_id);
+static uint8_t get_retry_left_by_msg_id(uint16_t msg_id) {
+    int idx = find_retry_by_msg_id(msg_id);
     return (idx >= 0) ? m_retry_table[idx].left : 0;
 }
 
-static uint8_t decrement_retry_by_msg_id(uint16_t message_id) {
-    int idx = find_retry_by_msg_id(message_id);
+static uint8_t decrement_retry_by_msg_id(uint16_t msg_id) {
+    int idx = find_retry_by_msg_id(msg_id);
     if (idx >= 0 && m_retry_table[idx].left > 0) {
         m_retry_table[idx].left--;
     }
     return (idx >= 0) ? m_retry_table[idx].left : 0;
 }
 
-static bool get_retry_payload_by_msg_id(uint16_t message_id, struct esb_payload *payload) {
-    int idx = find_retry_by_msg_id(message_id);
+static bool get_retry_payload_by_msg_id(uint16_t msg_id, struct esb_payload *payload) {
+    int idx = find_retry_by_msg_id(msg_id);
     if (idx >= 0 && m_retry_table[idx].max > 0 && payload) {
         struct retry_entry *entry = &m_retry_table[idx];
         memcpy(payload->data, entry->payload.data, entry->payload.length);
@@ -213,6 +212,7 @@ static void event_handler(struct esb_evt const *event) {
                 uint8_t buf[CONFIG_ESB_MAX_PAYLOAD_LENGTH];
                 memcpy(buf, rx_payload.data, rx_payload.length);
                 // LOG_DBG("Packet len: %d", rx_payload.length);
+                // LOG_HEXDUMP_INF(buf, rx_payload.length, "rx_payload");
                 m_event.evt_type = APP_ESB_EVT_RX;
                 m_event.buf = buf;
                 m_event.data_length = rx_payload.length;
@@ -330,6 +330,7 @@ static int pull_packet_from_tx_msgq(void) {
             // dequeue FIFO msg
             k_msgq_get(&m_msgq_tx_payloads, &tx_payload, K_NO_WAIT);
             remove_retry_entry_by_msg_id(m_current_tx_msg_id);
+            m_current_tx_msg_id = 0;
 
         } else if (ret) {
             LOG_WRN("esb_write_payload failed (%d)", ret);
@@ -359,6 +360,7 @@ static int pull_packet_from_tx_msgq(void) {
                 return esb_ret;
             }
             k_msgq_get(&m_msgq_tx_payloads, &tx_payload, K_NO_WAIT);
+            // LOG_INF("TX evt_msg_id: %d", m_current_tx_msg_id);
             que_was_fulled = 0;
         }
     }
@@ -408,9 +410,9 @@ int zmk_split_esb_send(app_esb_data_t *tx_packet) {
     ret = k_msgq_put(&m_msgq_tx_payloads, &tx_payload, K_NO_WAIT);
 
     if (ret == 0) {
-        int idx = add_retry_entry(tx_packet->message_id, tx_packet->max_retry, &tx_payload);
+        int idx = add_retry_entry(tx_packet->msg_id, tx_packet->max_retry, &tx_payload);
         if (idx >= 0) {
-            m_current_tx_msg_id = tx_packet->message_id;
+            m_current_tx_msg_id = tx_packet->msg_id;
         }
         m_msgq_full_last_time = 0;
     } else if (ret == -ENOMSG) {
@@ -423,6 +425,7 @@ int zmk_split_esb_send(app_esb_data_t *tx_packet) {
                 CONFIG_ZMK_SPLIT_ESB_MSGQ_FULL_TIMEOUT_MS);
             k_msgq_purge(&m_msgq_tx_payloads);
             clear_retry_table();
+            m_current_tx_msg_id = 0;
             if (m_active) {
                 esb_flush_tx(); 
             }
@@ -475,6 +478,7 @@ static int app_esb_resume(void) {
         int err = esb_initialize(m_mode);
         m_active = true;
         clear_retry_table();
+        m_current_tx_msg_id = 0;
         pull_packet_from_tx_msgq();
         return err;
     }

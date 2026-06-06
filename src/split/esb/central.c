@@ -77,9 +77,9 @@ static int split_central_esb_send_command(uint8_t source,
         return data_size;
     }
 
-    // Data + type + source
-    size_t payload_size =
-        data_size + sizeof(source) + sizeof(enum zmk_split_transport_central_command_type);
+    size_t payload_size = data_size
+                        + sizeof(source)
+                        + sizeof(enum zmk_split_transport_central_command_type);
 
     if (ring_buf_space_get(&tx_buf) < ESB_MSG_EXTRA_SIZE + payload_size) {
         LOG_WRN("No room to send command to the peripheral %d (have %d but only space for %d/%d)", 
@@ -98,29 +98,29 @@ static int split_central_esb_send_command(uint8_t source,
                                             .cmd = cmd,
                                         }};
 
-    size_t pfx_len = sizeof(env.prefix) + payload_size;
-    // LOG_HEXDUMP_DBG(&env, pfx_len, "Payload");
+    size_t cmd_env_len = sizeof(env.prefix) + payload_size;
+    // LOG_HEXDUMP_DBG(&env, cmd_env_len, "Payload");
 
-    size_t put = ring_buf_put(&tx_buf, (uint8_t *)&env, pfx_len);
-    if (put != pfx_len) {
-        LOG_WRN("Failed to put the whole message (%d vs %d)", put, pfx_len);
+    size_t put = ring_buf_put(&tx_buf, (uint8_t *)&env, cmd_env_len);
+    if (put != cmd_env_len) {
+        LOG_WRN("Failed to put the whole message (%d vs %d)", put, cmd_env_len);
     }
 
-    struct esb_msg_postfix postfix = {.crc = crc32_ieee((void *)&env, pfx_len)};
+    struct esb_msg_postfix postfix = {.crc = crc32_ieee((void *)&env, cmd_env_len)};
 
     put = ring_buf_put(&tx_buf, (uint8_t *)&postfix, sizeof(postfix));
     if (put != sizeof(postfix)) {
         LOG_WRN("Failed to put the postfix (%d vs %d)", put, sizeof(postfix));
     }
 
-    static uint16_t cmd_message_id = 0;
-    if (++cmd_message_id >= UINT16_MAX - 1000) {
-        cmd_message_id = 1;
+    static uint16_t cmd_msg_id = 0;
+    if (++cmd_msg_id >= UINT16_MAX - 1000) {
+        cmd_msg_id = 1;
     }
-    // LOG_DBG("evt #: %d", cmd_message_id);
+    // LOG_INF("cmd_msg_id: %d", cmd_msg_id);
 
     uint8_t max_retry = CONFIG_ZMK_SPLIT_ESB_RETRY_CMD;
-    struct esb_msg_meta meta = {.message_id = cmd_message_id, .max_retry = max_retry};
+    struct esb_msg_meta meta = {.msg_id = cmd_msg_id, .max_retry = max_retry};
 
     put = ring_buf_put(&tx_buf, (uint8_t *)&meta, sizeof(meta));
     if (put != sizeof(meta)) {

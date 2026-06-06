@@ -44,7 +44,7 @@ struct esb_msg_postfix {
 } __packed;
 
 struct esb_msg_meta {
-    uint16_t message_id;
+    uint16_t msg_id;
     uint8_t max_retry;
 } __packed;
 

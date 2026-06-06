@@ -72,6 +72,22 @@ config ZMK_SPLIT_ESB_MSGQ_FULL_TIMEOUT_MS
     int "Timeout (ms) to clear retry table when msgq stays full"
     default 3000
 
+config ZMK_SPLIT_ESB_TIMESLOT_REQUEST_TIMEOUT_US
+    int "Timeout to grant the MPSL slot (default 1000 ms)"
+    default 1000000
+
+config ZMK_SPLIT_ESB_TIMESLOT_LENGTH_US
+    int "Duration of the active radio window of MPSL slot (default 10 ms)"
+    default 10000
+
+config ZMK_SPLIT_ESB_TIMESLOT_EXT_MARGIN_MARGIN
+    int "Headroom allocated for the extension request MPSL timeslot (default 4ms)"
+    default 4000
+
+config ZMK_SPLIT_ESB_TIMESLOT_REQ_EARLIEST_MARGIN
+    int "Margin to submit a new MPSL timeslot request (default 2ms)"
+    default 2000
+
 module = ZMK_SPLIT_ESB
 module-str = ZMK_SPLIT_ESB
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"

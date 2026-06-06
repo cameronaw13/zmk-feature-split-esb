@@ -54,7 +54,7 @@ void zmk_split_esb_async_tx(struct zmk_split_esb_async_state *state) {
     app_esb_data_t tx_data = {
         .data = buf,
         .len = meta_offset,
-        .message_id = meta.message_id,
+        .msg_id = meta.msg_id,
         .max_retry = meta.max_retry
     };
     zmk_split_esb_send(&tx_data); // callback > zmk_split_esb_cb()
