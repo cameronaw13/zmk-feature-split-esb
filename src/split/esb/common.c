@@ -14,7 +14,7 @@
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_SPLIT_ESB_LOG_LEVEL);
 
-void zmk_split_esb_async_tx(struct zmk_split_esb_async_state *state) {
+void zmk_split_esb_tx(struct zmk_split_esb_state *state) {
     size_t tx_buf_len = ring_buf_size_get(state->tx_buf);
     // LOG_DBG("tx_buf_len %u, CONFIG_ESB_MAX_PAYLOAD_LENGTH %u", 
     //         tx_buf_len, CONFIG_ESB_MAX_PAYLOAD_LENGTH);
@@ -52,6 +52,7 @@ void zmk_split_esb_async_tx(struct zmk_split_esb_async_state *state) {
     memcpy(&meta, &buf[meta_offset], sizeof(meta));
 
     app_esb_data_t tx_data = {
+        .pipe = state->tx_pipe,
         .data = buf,
         .len = meta_offset,
         .msg_id = meta.msg_id,
@@ -65,39 +66,41 @@ void zmk_split_esb_async_tx(struct zmk_split_esb_async_state *state) {
 
 static K_SEM_DEFINE(esb_cb_sem, 1, 1);
 
-void zmk_split_esb_cb(app_esb_event_t *event, struct zmk_split_esb_async_state *state) {
+void zmk_split_esb_cb(app_esb_event_t *event, struct zmk_split_esb_state *state) {
     switch(event->evt_type) {
         case APP_ESB_EVT_TX_SUCCESS:
             // LOG_DBG("ESB TX sent");
             if (!ring_buf_is_empty(state->tx_buf)) {
-                zmk_split_esb_async_tx(state);
+                zmk_split_esb_tx(state);
             }
             break;
         case APP_ESB_EVT_TX_FAIL:
             // LOG_WRN("ESB TX failed");
             if (!ring_buf_is_empty(state->tx_buf)) {
-                zmk_split_esb_async_tx(state);
+                zmk_split_esb_tx(state);
             }
             break;
         case APP_ESB_EVT_RX:
-            // LOG_DBG("ESB RX received: %d", event->data_length);
+            // LOG_DBG("ESB RX received: {%d} %d", event->pipe, event->data_length);
 
-            if (ring_buf_space_get(state->rx_buf) < event->data_length) {
+            struct ring_buf *rx_buf = &state->rx_bufs[event->pipe];
+
+            if (ring_buf_space_get(rx_buf) < event->data_length) {
                 LOG_WRN("No room to receive (have %d but only space for %d/%d)",
-                        event->data_length, ring_buf_space_get(state->rx_buf), 
-                        ring_buf_capacity_get(state->rx_buf));
+                        event->data_length, ring_buf_space_get(rx_buf), 
+                        ring_buf_capacity_get(rx_buf));
                 break;
             }
 
-            size_t received = ring_buf_put(state->rx_buf, event->buf, event->data_length);
+            size_t received = ring_buf_put(rx_buf, event->buf, event->data_length);
             if (received < event->data_length) {
                 LOG_ERR("RX overrun! %d < %d", received, event->data_length);
                 break;
             }
 
-            // LOG_DBG("RX + %3d and now buffer is %3d", received, ring_buf_size_get(state->rx_buf));
+            // LOG_DBG("RX + %3d and now buffer is %3d", received, ring_buf_size_get(&rx_buf));
             if (state->process_rx_callback) {
-                state->process_rx_callback();
+                state->process_rx_callback(event->pipe);
             }
 
             break;

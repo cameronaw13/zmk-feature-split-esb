@@ -22,11 +22,13 @@ typedef enum {
 
 typedef struct {
     app_esb_event_type_t evt_type;
+    uint8_t pipe;
     uint8_t *buf;
     uint32_t data_length;
 } app_esb_event_t;
 
 typedef struct {
+    uint8_t pipe;
     uint8_t *data;
     uint32_t len;
     uint16_t msg_id;

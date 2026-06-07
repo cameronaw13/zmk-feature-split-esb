@@ -50,17 +50,17 @@ struct esb_msg_meta {
 
 #define ESB_MSG_EXTRA_SIZE (sizeof(struct esb_msg_prefix) + sizeof(struct esb_msg_postfix) + sizeof(struct esb_msg_meta))
 
-typedef void (*zmk_split_esb_process_rx_callback_t)(void);
+typedef void (*zmk_split_esb_process_rx_callback_t)(uint8_t pipe);
 
-struct zmk_split_esb_async_state {
-    atomic_t state;
+struct zmk_split_esb_state {
+    uint8_t tx_pipe;
     zmk_split_esb_process_rx_callback_t process_rx_callback;
     struct ring_buf *tx_buf;
-    struct ring_buf *rx_buf;
+    struct ring_buf *rx_bufs;
 };
 
-void zmk_split_esb_async_tx(struct zmk_split_esb_async_state *state);
+void zmk_split_esb_tx(struct zmk_split_esb_state *state);
 
-void zmk_split_esb_cb(app_esb_event_t *event, struct zmk_split_esb_async_state *state);
+void zmk_split_esb_cb(app_esb_event_t *event, struct zmk_split_esb_state *state);
 
 int zmk_split_esb_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_size);

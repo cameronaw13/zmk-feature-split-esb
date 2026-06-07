@@ -30,27 +30,31 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_SPLIT_ESB_LOG_LEVEL);
 #include "app_esb.h"
 #include "common.h"
 
-#define RX_BUFFER_SIZE (sizeof(struct esb_event_envelope) + sizeof(struct esb_msg_postfix))
 #define TX_BUFFER_SIZE (sizeof(struct esb_command_envelope) + sizeof(struct esb_msg_postfix))
+#define RX_BUFFER_SIZE (sizeof(struct esb_event_envelope) + sizeof(struct esb_msg_postfix))
 
-RING_BUF_DECLARE(rx_buf, RX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS);
 RING_BUF_DECLARE(tx_buf, TX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS);
+
+#define RX_RING_BUF_SIZE (RX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS)
+struct ring_buf rx_bufs[CONFIG_ESB_PIPE_COUNT];
+uint8_t rx_bufs_data[CONFIG_ESB_PIPE_COUNT][RX_RING_BUF_SIZE];
 
 static void publish_events_work(struct k_work *work);
 K_WORK_DEFINE(publish_events, publish_events_work);
 
-static void process_rx_cb(void);
+static void process_rx_cb(uint8_t pipe);
 K_MSGQ_DEFINE(evt_msg_queue, sizeof(struct esb_event_payload), 
     CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS, 4);
 
-static struct zmk_split_esb_async_state async_state = {
+static struct zmk_split_esb_state state = {
+    .tx_pipe = 0,
     .process_rx_callback = process_rx_cb,
-    .rx_buf = &rx_buf,
     .tx_buf = &tx_buf,
+    .rx_bufs = rx_bufs,
 };
 
 static void begin_tx(void) {
-    zmk_split_esb_async_tx(&async_state);
+    zmk_split_esb_tx(&state);
 }
 
 static ssize_t get_payload_data_size(const struct zmk_split_transport_central_command *cmd) {
@@ -133,7 +137,7 @@ static int split_central_esb_send_command(uint8_t source,
 }
 
 void zmk_split_esb_on_prx_esb_callback(app_esb_event_t *event) {
-    zmk_split_esb_cb(event, &async_state);
+    zmk_split_esb_cb(event, &state);
 }
 
 static int split_central_esb_get_available_source_ids(uint8_t *sources) {
@@ -185,6 +189,9 @@ static void notify_status_work_cb(struct k_work *_work) { notify_transport_statu
 static K_WORK_DEFINE(notify_status_work, notify_status_work_cb);
 
 static int zmk_split_esb_central_init(void) {
+    for (int i = 0; i < CONFIG_ESB_PIPE_COUNT; i++) {
+        ring_buf_init(&rx_bufs[i], RX_RING_BUF_SIZE, rx_bufs_data[i]);
+    }
     int ret = zmk_split_esb_init(APP_ESB_MODE_PRX, zmk_split_esb_on_prx_esb_callback);
     if (ret) {
         LOG_ERR("zmk_split_esb_init failed (err %d)", ret);
@@ -196,10 +203,12 @@ static int zmk_split_esb_central_init(void) {
 
 SYS_INIT(zmk_split_esb_central_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
-static void process_rx_cb(void) {
-    while (ring_buf_size_get(&rx_buf) > ESB_MSG_EXTRA_SIZE) {
+static void process_rx_cb(uint8_t pipe) {
+    // LOG_DBG("pipe: %d", pipe);
+    struct ring_buf *rx_buf = &state.rx_bufs[pipe];
+    while (ring_buf_size_get(rx_buf) > ESB_MSG_EXTRA_SIZE) {
         struct esb_event_envelope env;
-        int item_err = zmk_split_esb_get_item(&rx_buf, (uint8_t *)&env, 
+        int item_err = zmk_split_esb_get_item(rx_buf, (uint8_t *)&env, 
                                               sizeof(struct esb_event_envelope));
         switch (item_err) {
         case 0:

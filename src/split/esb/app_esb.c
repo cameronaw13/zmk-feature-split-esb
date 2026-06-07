@@ -35,13 +35,13 @@ LOG_MODULE_REGISTER(app_esb, CONFIG_ZMK_SPLIT_ESB_LOG_LEVEL);
 #error "zmk,esb-split :: base-addr-1 must include 4 bytes"
 #endif
 
-#if (!HAS_ADDR_PREFIX || ADDR_PREFIX_LEN != 8)
+#if (!HAS_ADDR_PREFIX || ADDR_PREFIX_LEN > CONFIG_ESB_PIPE_COUNT)
 #error "zmk,esb-split :: base-addr-0 must include 8 bytes"
 #endif
 
-uint8_t esb_base_addr_0[4] = DT_INST_PROP(0, base_addr_0);
-uint8_t esb_base_addr_1[4] = DT_INST_PROP(0, base_addr_1);
-uint8_t esb_addr_prefix[4] = DT_INST_PROP(0, addr_prefix);
+uint8_t esb_base_addr_0[BASE_ADDR_0_LEN] = DT_INST_PROP(0, base_addr_0);
+uint8_t esb_base_addr_1[BASE_ADDR_1_LEN] = DT_INST_PROP(0, base_addr_1);
+uint8_t esb_addr_prefix[ADDR_PREFIX_LEN] = DT_INST_PROP(0, addr_prefix);
 
 #else
 #error "Need to create a node with compatible of 'zmk,esb-split` with `all `address` property set."
@@ -208,12 +208,14 @@ static void event_handler(struct esb_evt const *event) {
             // LOG_DBG("RX SUCCESS");
             struct esb_payload rx_payload;
             while (esb_read_rx_payload(&rx_payload) == 0) {
-                // LOG_DBG("Chunk %d, len: %d", rx_payload.pid, rx_payload.length);
+                // LOG_DBG("Chunk %d, pipe: %d, len: %d", 
+                //     rx_payload.pid, rx_payload.pipe, rx_payload.length);
                 uint8_t buf[CONFIG_ESB_MAX_PAYLOAD_LENGTH];
                 memcpy(buf, rx_payload.data, rx_payload.length);
                 // LOG_DBG("Packet len: %d", rx_payload.length);
                 // LOG_HEXDUMP_INF(buf, rx_payload.length, "rx_payload");
                 m_event.evt_type = APP_ESB_EVT_RX;
+                m_event.pipe = rx_payload.pipe;
                 m_event.buf = buf;
                 m_event.data_length = rx_payload.length;
                 m_callback(&m_event);
@@ -395,7 +397,7 @@ int zmk_split_esb_set_enable(bool enabled) {
 int zmk_split_esb_send(app_esb_data_t *tx_packet) {
     int ret = 0;
     struct esb_payload tx_payload;
-    tx_payload.pipe = 0;
+    tx_payload.pipe = tx_packet->pipe;
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_PROTO_TX_ACK)
     tx_payload.noack = false;
 #else
@@ -442,7 +444,7 @@ int zmk_split_esb_send(app_esb_data_t *tx_packet) {
 
 static int app_esb_suspend(void) {
     m_active = false;
-    if(m_mode == APP_ESB_MODE_PTX) {
+    if (m_mode == APP_ESB_MODE_PTX) {
         uint32_t irq_key = irq_lock();
 
         irq_disable(RADIO_IRQn);
@@ -474,7 +476,7 @@ static int app_esb_suspend(void) {
 }
 
 static int app_esb_resume(void) {
-    if(m_mode == APP_ESB_MODE_PTX) {
+    if (m_mode == APP_ESB_MODE_PTX) {
         int err = esb_initialize(m_mode);
         m_active = true;
         clear_retry_table();

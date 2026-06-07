@@ -33,30 +33,34 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_SPLIT_ESB_LOG_LEVEL);
 #define TX_BUFFER_SIZE (sizeof(struct esb_event_envelope) + sizeof(struct esb_msg_postfix) + sizeof(struct esb_msg_meta))
 #define RX_BUFFER_SIZE (sizeof(struct esb_command_envelope) + sizeof(struct esb_msg_postfix))
 
-RING_BUF_DECLARE(chosen_rx_buf, RX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS);
-RING_BUF_DECLARE(chosen_tx_buf, TX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS);
+RING_BUF_DECLARE(tx_buf, TX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS);
+
+#define RX_RING_BUF_SIZE (RX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS)
+struct ring_buf rx_bufs[CONFIG_ESB_PIPE_COUNT];
+uint8_t rx_bufs_data[CONFIG_ESB_PIPE_COUNT][RX_RING_BUF_SIZE];
 
 static const uint8_t peripheral_id = CONFIG_ZMK_SPLIT_ESB_PERIPHERAL_ID;
 
 static void publish_commands_work(struct k_work *work);
 K_WORK_DEFINE(publish_commands, publish_commands_work);
 
-static void process_rx_cb(void);
+static void process_rx_cb(uint8_t pipe);
 K_MSGQ_DEFINE(cmd_msg_queue, sizeof(struct zmk_split_transport_central_command), 
     CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS, 4);
 
-static struct zmk_split_esb_async_state async_state = {
+static struct zmk_split_esb_state state = {
+    .tx_pipe = CONFIG_ZMK_SPLIT_ESB_PERIPHERAL_ID % CONFIG_ESB_PIPE_COUNT,
     .process_rx_callback = process_rx_cb,
-    .rx_buf = &chosen_rx_buf,
-    .tx_buf = &chosen_tx_buf,
+    .tx_buf = &tx_buf,
+    .rx_bufs = rx_bufs,
 };
 
 static void begin_tx(void) {
-    zmk_split_esb_async_tx(&async_state);
+    zmk_split_esb_tx(&state);
 }
 
 void zmk_split_esb_on_ptx_esb_callback(app_esb_event_t *event) {
-    zmk_split_esb_cb(event, &async_state);
+    zmk_split_esb_cb(event, &state);
 }
 
 static ssize_t get_payload_data_size(const struct zmk_split_transport_peripheral_event *evt) {
@@ -101,11 +105,11 @@ split_peripheral_esb_report_event(const struct zmk_split_transport_peripheral_ev
                         + sizeof(peripheral_id)
                         + sizeof(enum zmk_split_transport_peripheral_event_type);
 
-    if (ring_buf_space_get(&chosen_tx_buf) < ESB_MSG_EXTRA_SIZE + payload_size) {
+    if (ring_buf_space_get(&tx_buf) < ESB_MSG_EXTRA_SIZE + payload_size) {
         LOG_WRN("No room to send event to the central (have %d but only space for %d/%d)",
-                ESB_MSG_EXTRA_SIZE + payload_size, ring_buf_space_get(&chosen_tx_buf),
-                ring_buf_capacity_get(&chosen_tx_buf));
-        ring_buf_reset(&chosen_tx_buf);
+                ESB_MSG_EXTRA_SIZE + payload_size, ring_buf_space_get(&tx_buf),
+                ring_buf_capacity_get(&tx_buf));
+        ring_buf_reset(&tx_buf);
         return -ENOSPC;
     }
 
@@ -121,14 +125,14 @@ split_peripheral_esb_report_event(const struct zmk_split_transport_peripheral_ev
     size_t evt_env_len = sizeof(env.prefix) + payload_size;
     // LOG_HEXDUMP_DBG(&env, evt_env_len, "ota payload");
 
-    size_t put = ring_buf_put(&chosen_tx_buf, (uint8_t *)&env, evt_env_len);
+    size_t put = ring_buf_put(&tx_buf, (uint8_t *)&env, evt_env_len);
     if (put != evt_env_len) {
         LOG_WRN("Failed to put the whole message (%d vs %d)", put, evt_env_len);
     }
 
     struct esb_msg_postfix postfix = {.crc = crc32_ieee((void *)&env, evt_env_len)};
 
-    put = ring_buf_put(&chosen_tx_buf, (uint8_t *)&postfix, sizeof(postfix));
+    put = ring_buf_put(&tx_buf, (uint8_t *)&postfix, sizeof(postfix));
     if (put != sizeof(postfix)) {
         LOG_WRN("Failed to put the postfix (%d vs %d)", put, sizeof(postfix));
     }
@@ -143,7 +147,7 @@ split_peripheral_esb_report_event(const struct zmk_split_transport_peripheral_ev
     uint8_t max_retry = get_retry_count(event);
     struct esb_msg_meta meta = {.msg_id = evt_msg_id, .max_retry = max_retry};
 
-    put = ring_buf_put(&chosen_tx_buf, (uint8_t *)&meta, sizeof(meta));
+    put = ring_buf_put(&tx_buf, (uint8_t *)&meta, sizeof(meta));
     if (put != sizeof(meta)) {
         LOG_WRN("Failed to put the meta (%d vs %d)", put, sizeof(meta));
     }
@@ -197,6 +201,9 @@ static void notify_status_work_cb(struct k_work *_work) { notify_transport_statu
 static K_WORK_DEFINE(notify_status_work, notify_status_work_cb);
 
 static int zmk_split_esb_peripheral_init(void) {
+    for (int i = 0; i < CONFIG_ESB_PIPE_COUNT; i++) {
+        ring_buf_init(&rx_bufs[i], RX_RING_BUF_SIZE, rx_bufs_data[i]);
+    }
     int ret = zmk_split_esb_init(APP_ESB_MODE_PTX, zmk_split_esb_on_ptx_esb_callback);
     if (ret < 0) {
         LOG_ERR("zmk_split_esb_init failed (ret %d)", ret);
@@ -208,10 +215,11 @@ static int zmk_split_esb_peripheral_init(void) {
 
 SYS_INIT(zmk_split_esb_peripheral_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
-static void process_rx_cb(void) {
-    while (ring_buf_size_get(&chosen_rx_buf) > ESB_MSG_EXTRA_SIZE) {
+static void process_rx_cb(uint8_t pipe) {
+    struct ring_buf *rx_buf = &state.rx_bufs[pipe];
+    while (ring_buf_size_get(rx_buf) > ESB_MSG_EXTRA_SIZE) {
         struct esb_command_envelope env;
-        int item_err = zmk_split_esb_get_item(&chosen_rx_buf, (uint8_t *)&env,
+        int item_err = zmk_split_esb_get_item(rx_buf, (uint8_t *)&env,
                                               sizeof(struct esb_command_envelope));
         switch (item_err) {
         case 0:
