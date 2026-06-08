@@ -72,6 +72,12 @@ config ZMK_SPLIT_ESB_MSGQ_FULL_TIMEOUT_MS
     int "Timeout (ms) to clear retry table when msgq stays full"
     default 3000
 
+config ZMK_SPLIT_ESB_AUTO_HEAL_KEY_POS_MAX
+    int "Max key position to track and heal lost packet from peripherals"
+    default 36
+    help
+        Central shield config, equals to number of keys in keymaps
+
 config ZMK_SPLIT_ESB_TIMESLOT_REQUEST_TIMEOUT_US
     int "Timeout to grant the MPSL slot (default 1000 ms)"
     default 1000000

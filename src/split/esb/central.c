@@ -39,12 +39,7 @@ RING_BUF_DECLARE(tx_buf, TX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS)
 struct ring_buf rx_bufs[CONFIG_ESB_PIPE_COUNT];
 uint8_t rx_bufs_data[CONFIG_ESB_PIPE_COUNT][RX_RING_BUF_SIZE];
 
-static void publish_events_work(struct k_work *work);
-K_WORK_DEFINE(publish_events, publish_events_work);
-
 static void process_rx_cb(uint8_t pipe);
-K_MSGQ_DEFINE(evt_msg_queue, sizeof(struct esb_event_payload), 
-    CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS, 4);
 
 static struct zmk_split_esb_state state = {
     .tx_pipe = 0,
@@ -203,38 +198,64 @@ static int zmk_split_esb_central_init(void) {
 
 SYS_INIT(zmk_split_esb_central_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
-static void process_rx_cb(uint8_t pipe) {
-    // LOG_DBG("pipe: %d", pipe);
-    struct ring_buf *rx_buf = &state.rx_bufs[pipe];
-    while (ring_buf_size_get(rx_buf) > ESB_MSG_EXTRA_SIZE) {
-        struct esb_event_envelope env;
-        int item_err = zmk_split_esb_get_item(rx_buf, (uint8_t *)&env, 
-                                              sizeof(struct esb_event_envelope));
-        switch (item_err) {
-        case 0:
-            int ret = k_msgq_put(&evt_msg_queue, &env.payload, K_NO_WAIT);
-            if (ret < 0) {
-                LOG_WRN("Failed to queue event for processing (%d)", ret);
-                continue;
+extern const struct zmk_split_transport_central *active_transport;
+
+static void process_rx_work_cb(struct k_work *work) {
+    for (int pipe = 0; pipe < CONFIG_ESB_PIPE_COUNT; pipe++) {
+        struct ring_buf *rx_buf = &state.rx_bufs[pipe];
+        while (ring_buf_size_get(rx_buf) > ESB_MSG_EXTRA_SIZE) {
+            struct esb_event_envelope env;
+            int item_err = zmk_split_esb_get_item(rx_buf, (uint8_t *)&env, 
+                                                  sizeof(struct esb_event_envelope));
+            switch (item_err) {
+            case 0:
+                if (&esb_central == active_transport) {
+
+                    static uint8_t key_pos_states[(CONFIG_ZMK_SPLIT_ESB_AUTO_HEAL_KEY_POS_MAX + 8) / 8];
+                    struct zmk_split_transport_peripheral_event ev = env.payload.event;
+
+                    if (ev.type == ZMK_SPLIT_TRANSPORT_PERIPHERAL_EVENT_TYPE_KEY_POSITION_EVENT) {
+
+                        uint8_t pressed = ev.data.key_position_event.pressed;
+                        uint8_t position = ev.data.key_position_event.position;
+
+                        if (position < CONFIG_ZMK_SPLIT_ESB_AUTO_HEAL_KEY_POS_MAX) {
+                            if (pressed) {
+                                if ((key_pos_states[position / 8] >> (position % 8)) & 1) {
+                                    LOG_WRN("re-pressing detected, inject release event");
+                                    struct zmk_position_state_changed state_ev = {
+                                        .source = env.payload.source,
+                                        .position = position,
+                                        .state = !pressed,
+                                        .timestamp = k_uptime_get()
+                                    };
+                                    raise_zmk_position_state_changed(state_ev);
+                                    k_sleep(K_MSEC(1));
+                                }
+                                key_pos_states[position / 8] |= 1 << (position % 8);
+                            } else {
+                                key_pos_states[position / 8] &= ~(1 << (position % 8));
+                            }
+                        }
+
+                    }
+                }
+
+                zmk_split_transport_central_peripheral_event_handler(
+                    &esb_central, env.payload.source, env.payload.event);
+                break;
+            case -EAGAIN:
+                break;
+            default:
+                // LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
+                break;
             }
-
-            k_work_submit(&publish_events);
-
-            break;
-        case -EAGAIN:
-            return;
-        default:
-            // LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
-            continue;
         }
     }
 }
 
-static void publish_events_work(struct k_work *work) {
-    struct esb_event_payload payload;
+K_WORK_DEFINE(process_rx_work, process_rx_work_cb);
 
-    while (k_msgq_get(&evt_msg_queue, &payload, K_NO_WAIT) >= 0) {
-        zmk_split_transport_central_peripheral_event_handler(
-            &esb_central, payload.source, payload.event);
-    }
+static void process_rx_cb(uint8_t pipe) {
+    k_work_submit(&process_rx_work);
 }

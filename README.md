@@ -132,6 +132,10 @@ CONFIG_ZMK_SPLIT_ESB_RETRY_CMD=1
 # Timeout (ms) to clear msgq and retry table when msgq stays full
 CONFIG_ZMK_SPLIT_ESB_MSGQ_FULL_TIMEOUT_MS=3000
 
+# Max key position to track and heal lost packet from peripherals
+# NOTE: Central shield config, equals to number of keys in keymaps
+CONFIG_ZMK_SPLIT_ESB_AUTO_HEAL_KEY_POS_MAX=42
+
 # another IMPORTANT config for ESB
 CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4096
 CONFIG_ESB_MAX_PAYLOAD_LENGTH=48

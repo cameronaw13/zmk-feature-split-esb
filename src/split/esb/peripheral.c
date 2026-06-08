@@ -41,12 +41,7 @@ uint8_t rx_bufs_data[CONFIG_ESB_PIPE_COUNT][RX_RING_BUF_SIZE];
 
 static const uint8_t peripheral_id = CONFIG_ZMK_SPLIT_ESB_PERIPHERAL_ID;
 
-static void publish_commands_work(struct k_work *work);
-K_WORK_DEFINE(publish_commands, publish_commands_work);
-
 static void process_rx_cb(uint8_t pipe);
-K_MSGQ_DEFINE(cmd_msg_queue, sizeof(struct zmk_split_transport_central_command), 
-    CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS, 4);
 
 static struct zmk_split_esb_state state = {
     .tx_pipe = CONFIG_ZMK_SPLIT_ESB_PERIPHERAL_ID % CONFIG_ESB_PIPE_COUNT,
@@ -215,47 +210,38 @@ static int zmk_split_esb_peripheral_init(void) {
 
 SYS_INIT(zmk_split_esb_peripheral_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 
-static void process_rx_cb(uint8_t pipe) {
-    struct ring_buf *rx_buf = &state.rx_bufs[pipe];
-    while (ring_buf_size_get(rx_buf) > ESB_MSG_EXTRA_SIZE) {
-        struct esb_command_envelope env;
-        int item_err = zmk_split_esb_get_item(rx_buf, (uint8_t *)&env,
-                                              sizeof(struct esb_command_envelope));
-        switch (item_err) {
-        case 0:
-            if (env.payload.cmd.type == ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_POLL_EVENTS) {
-                begin_tx();
+static void process_rx_work_cb(struct k_work *work) {
+    for (int pipe = 0; pipe < CONFIG_ESB_PIPE_COUNT; pipe++) {
+        struct ring_buf *rx_buf = &state.rx_bufs[pipe];
+        while (ring_buf_size_get(rx_buf) > ESB_MSG_EXTRA_SIZE) {
+            struct esb_command_envelope env;
+            int item_err = zmk_split_esb_get_item(rx_buf, (uint8_t *)&env,
+                                                  sizeof(struct esb_command_envelope));
+            switch (item_err) {
+            case 0:
+                if (env.payload.cmd.type == ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_POLL_EVENTS) {
+                    begin_tx();
+                    break;
+                }
+                if (env.payload.source != peripheral_id) {
+                    LOG_WRN("Ignoring command type %d for source %d (expect %d)", 
+                            env.payload.cmd.type, env.payload.source, peripheral_id);
+                    break;
+                }
+                zmk_split_transport_peripheral_command_handler(&esb_peripheral, env.payload.cmd);
+                break;
+            case -EAGAIN:
+                break;
+            default:
+                // LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
                 break;
             }
-
-            if (env.payload.source != peripheral_id) {
-                LOG_WRN("Ignoring command type %d for source %d (expect %d)", 
-                        env.payload.cmd.type, env.payload.source, peripheral_id);
-                continue;
-            }
-
-            int ret = k_msgq_put(&cmd_msg_queue, &env.payload.cmd, K_NO_WAIT);
-            if (ret < 0) {
-                LOG_WRN("Failed to queue command for processing (%d)", ret);
-                continue;
-            }
-
-            k_work_submit(&publish_commands);
-
-            break;
-        case -EAGAIN:
-            return;
-        default:
-            // LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
-            continue;
         }
     }
 }
 
-static void publish_commands_work(struct k_work *work) {
-    struct zmk_split_transport_central_command cmd;
+K_WORK_DEFINE(process_rx_work, process_rx_work_cb);
 
-    while (k_msgq_get(&cmd_msg_queue, &cmd, K_NO_WAIT) >= 0) {
-        zmk_split_transport_peripheral_command_handler(&esb_peripheral, cmd);
-    }
+static void process_rx_cb(uint8_t pipe) {
+    k_work_submit(&process_rx_work);
 }
