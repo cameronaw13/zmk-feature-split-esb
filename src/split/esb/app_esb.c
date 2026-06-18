@@ -269,6 +269,9 @@ static int esb_initialize(app_esb_mode_t mode) {
     config.mode = (mode == APP_ESB_MODE_PTX) ? ESB_MODE_PTX : ESB_MODE_PRX;
     config.tx_mode = ESB_TXMODE_MANUAL_START;
     config.selective_auto_ack = true;
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_CTLR_TX_PWR_PLUS_8)
+    config.tx_output_power = ESB_TX_POWER_8DBM;
+#endif
 
     err = esb_init(&config);
 
@@ -401,7 +404,7 @@ int zmk_split_esb_send(app_esb_data_t *tx_packet) {
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_PROTO_TX_ACK)
     tx_payload.noack = false;
 #else
-    tx_payload.noack = true;
+    tx_payload.noack = true;e
 #endif
     memcpy(tx_payload.data, tx_packet->data, tx_packet->len);
     tx_payload.length = tx_packet->len;
