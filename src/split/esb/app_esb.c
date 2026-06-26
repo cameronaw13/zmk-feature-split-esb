@@ -404,7 +404,7 @@ int zmk_split_esb_send(app_esb_data_t *tx_packet) {
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_PROTO_TX_ACK)
     tx_payload.noack = false;
 #else
-    tx_payload.noack = true;e
+    tx_payload.noack = true;
 #endif
     memcpy(tx_payload.data, tx_packet->data, tx_packet->len);
     tx_payload.length = tx_packet->len;
