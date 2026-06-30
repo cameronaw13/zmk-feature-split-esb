@@ -30,8 +30,13 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_SPLIT_ESB_LOG_LEVEL);
 #include "app_esb.h"
 #include "common.h"
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_MSG_POSTFIX_CRC)
 #define TX_BUFFER_SIZE (sizeof(struct esb_event_envelope) + sizeof(struct esb_msg_postfix) + sizeof(struct esb_msg_meta))
 #define RX_BUFFER_SIZE (sizeof(struct esb_command_envelope) + sizeof(struct esb_msg_postfix))
+#else
+#define TX_BUFFER_SIZE (sizeof(struct esb_event_envelope) + sizeof(struct esb_msg_meta))
+#define RX_BUFFER_SIZE (sizeof(struct esb_command_envelope))
+#endif
 
 RING_BUF_DECLARE(tx_buf, TX_BUFFER_SIZE * CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS);
 
@@ -125,6 +130,7 @@ split_peripheral_esb_report_event(const struct zmk_split_transport_peripheral_ev
         LOG_WRN("Failed to put the whole message (%d vs %d)", put, evt_env_len);
     }
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_MSG_POSTFIX_CRC)
     struct esb_msg_postfix postfix = {.crc = crc32_ieee((void *)&env, evt_env_len)};
 
     put = ring_buf_put(&tx_buf, (uint8_t *)&postfix, sizeof(postfix));
@@ -132,6 +138,7 @@ split_peripheral_esb_report_event(const struct zmk_split_transport_peripheral_ev
         LOG_WRN("Failed to put the postfix (%d vs %d)", put, sizeof(postfix));
     }
     // LOG_HEXDUMP_DBG(&postfix, sizeof(postfix), "postfix");
+#endif
 
     static uint16_t evt_msg_id = 0;
     if (++evt_msg_id >= UINT16_MAX - 1000) {

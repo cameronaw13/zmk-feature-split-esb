@@ -100,6 +100,11 @@ CONFIG_ZMK_SPLIT_ESB_CTLR_TX_PWR_PLUS_8=y
 # disable this iif you are pursuing extreme low latency, not much different in real-life.
 CONFIG_ZMK_SPLIT_ESB_PROTO_TX_ACK=y
 
+# enable application level checksum
+# default y, disable this if you are pursuing >4k refresh rate
+# if enabled, 4-byte-checksum will be sent to catch cross-peripheral radio jam.
+CONFIG_ZMK_SPLIT_ESB_MSG_POSTFIX_CRC=y
+
 # The delay between each retransmission of unacknowledged packets
 # NOTE: radio will chock if too short
 CONFIG_ZMK_SPLIT_ESB_PROTO_TX_RETRANSMIT_DELAY=600

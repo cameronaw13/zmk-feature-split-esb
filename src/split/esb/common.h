@@ -39,16 +39,22 @@ struct esb_event_envelope {
     struct esb_event_payload payload;
 } __packed;
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_MSG_POSTFIX_CRC)
 struct esb_msg_postfix {
     uint32_t crc;
 } __packed;
+#endif
 
 struct esb_msg_meta {
     uint16_t msg_id;
     uint8_t max_retry;
 } __packed;
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_MSG_POSTFIX_CRC)
 #define ESB_MSG_EXTRA_SIZE (sizeof(struct esb_msg_prefix) + sizeof(struct esb_msg_postfix) + sizeof(struct esb_msg_meta))
+#else
+#define ESB_MSG_EXTRA_SIZE (sizeof(struct esb_msg_prefix) + sizeof(struct esb_msg_meta))
+#endif
 
 typedef void (*zmk_split_esb_process_rx_callback_t)(uint8_t pipe);
 

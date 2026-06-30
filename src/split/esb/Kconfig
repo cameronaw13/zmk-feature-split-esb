@@ -32,6 +32,10 @@ config ZMK_SPLIT_ESB_PROTO_TX_ACK
     bool "Await ACK signal per sending packet for TX/RX"
     default y
 
+config ZMK_SPLIT_ESB_MSG_POSTFIX_CRC
+    bool "Enable application level checksum"
+    default y
+
 config ZMK_SPLIT_ESB_PROTO_TX_RETRANSMIT_DELAY
     int "The delay between each retransmission of unacknowledged packets"
     default 600

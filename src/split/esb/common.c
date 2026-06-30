@@ -22,10 +22,12 @@ void zmk_split_esb_tx(struct zmk_split_esb_state *state) {
         return;
     }
     // Need at least prefix + postfix + meta
-    if (tx_buf_len < sizeof(struct esb_msg_prefix) 
+    if (tx_buf_len < (sizeof(struct esb_msg_prefix) 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_MSG_POSTFIX_CRC)
     + sizeof(struct esb_msg_postfix) 
+#endif
     + sizeof(struct esb_msg_meta)
-    ) {
+    )) {
         return;
     }
     // LOG_DBG("tx_buf_len: %d", tx_buf_len);
@@ -112,7 +114,11 @@ void zmk_split_esb_cb(app_esb_event_t *event, struct zmk_split_esb_state *state)
 
 int zmk_split_esb_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_size) {
     // RX buffer only has prefix + postfix
-    while (ring_buf_size_get(rx_buf) > sizeof(struct esb_msg_prefix) + sizeof(struct esb_msg_postfix)) {
+    while (ring_buf_size_get(rx_buf) > (sizeof(struct esb_msg_prefix) 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_MSG_POSTFIX_CRC)
+            + sizeof(struct esb_msg_postfix)
+#endif
+    )) {
         struct esb_msg_prefix prefix;
 
         __ASSERT_EVAL(
@@ -142,7 +148,11 @@ int zmk_split_esb_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_siz
             return -EINVAL;
         }
 
-        if (ring_buf_size_get(rx_buf) < payload_to_read + sizeof(struct esb_msg_postfix)) {
+        if (ring_buf_size_get(rx_buf) < (payload_to_read 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_MSG_POSTFIX_CRC)
+            + sizeof(struct esb_msg_postfix)
+#endif
+        )) {
             return -EAGAIN;
         }
 
@@ -152,6 +162,7 @@ int zmk_split_esb_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_siz
                       read == payload_to_read,
                       "Somehow read less than we expect from the RX buffer");
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_MSG_POSTFIX_CRC)
         struct esb_msg_postfix postfix;
         __ASSERT_EVAL((void)ring_buf_get(rx_buf, (uint8_t *)&postfix, sizeof(postfix)),
                       uint32_t read = ring_buf_get(rx_buf, (uint8_t *)&postfix, sizeof(postfix)),
@@ -167,6 +178,7 @@ int zmk_split_esb_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_siz
                     crc, postfix.crc);
             return -EINVAL;
         }
+#endif
 
         return 0;
     }
