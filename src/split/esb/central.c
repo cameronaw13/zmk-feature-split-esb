@@ -153,7 +153,11 @@ static bool is_enabled;
 
 static int split_central_esb_set_enabled(bool enabled) {
     is_enabled = enabled;
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_USE_TIMESLOT)
     return zmk_split_esb_set_enable(enabled);
+#else
+    return 0;
+#endif
 }
 
 static int

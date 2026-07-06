@@ -145,6 +145,12 @@ CONFIG_ZMK_SPLIT_ESB_MSGQ_FULL_TIMEOUT_MS=3000
 # NOTE: Central shield config, equals to number of keys in keymaps
 CONFIG_ZMK_SPLIT_ESB_AUTO_HEAL_KEY_POS_MAX=42
 
+# Use MPSL timeslot to schedule radio
+# Default depends on COFNIG_BLE (Auto opt-in if BLE is enabled)
+# NOTE: In fact, this module cannot be compile with BLE,
+#       But it allows to opt-in to use Radio IRQ via MPSL with this config
+# CONFIG_ZMK_SPLIT_ESB_USE_TIMESLOT=n
+
 # another IMPORTANT config for ESB
 CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE=4096
 CONFIG_ESB_MAX_PAYLOAD_LENGTH=48
@@ -175,7 +181,6 @@ CONFIG_ZMK_SPLIT_BLE_CENTRAL_PERIPHERALS=2
 CONFIG_ZMK_BATTERY_REPORTING=y
 
 # for bump up all stack and queue size both central and peripheral
-CONFIG_MPSL_ASSERT_HANDLER=y
 CONFIG_MAIN_STACK_SIZE=4096
 CONFIG_IDLE_STACK_SIZE=512
 CONFIG_HW_STACK_PROTECTION=y

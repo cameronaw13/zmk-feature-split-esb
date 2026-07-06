@@ -5,7 +5,6 @@
  */
 
 #include "app_esb.h"
-#include "timeslot.h"
 #include <zephyr/drivers/clock_control.h>
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <esb.h>
@@ -15,6 +14,10 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(app_esb, CONFIG_ZMK_SPLIT_ESB_LOG_LEVEL);
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_USE_TIMESLOT)
+#include "timeslot.h"
+static void on_timeslot_start_stop(zmk_split_esb_timeslot_callback_type_t type);
+#endif
 
 #define DT_DRV_COMPAT zmk_esb_split
 #if DT_HAS_COMPAT_STATUS_OKAY(DT_DRV_COMPAT)
@@ -152,8 +155,6 @@ static bool m_active = false;
 static bool m_enabled = false;
 
 static int pull_packet_from_tx_msgq(void);
-
-static void on_timeslot_start_stop(zmk_split_esb_timeslot_callback_type_t type);
 
 static void event_handler(struct esb_evt const *event) {
     app_esb_event_t m_event;
@@ -381,18 +382,44 @@ int zmk_split_esb_init(app_esb_mode_t mode, app_esb_callback_t callback) {
     if (ret < 0) {
         return ret;
     }
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_USE_TIMESLOT)
     LOG_INF("Timeslothandler init");
     zmk_split_esb_timeslot_init(on_timeslot_start_stop);
+#else
+    ret = zmk_split_esb_set_enable(true);
+    if (ret) {
+        LOG_ERR("esb enable failed: %d", ret);
+    }
+#endif
     return 0;
 }
 
 int zmk_split_esb_set_enable(bool enabled) {
     m_enabled = enabled;
     if (enabled) {
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_USE_TIMESLOT)
         zmk_split_esb_timeslot_open_session();
+#else
+        int ret = esb_initialize(m_mode);
+        if (ret) {
+            LOG_ERR("set_enable: esb_initialize failed: %d", ret);
+            return ret;
+        }
+        m_active = true;
+        if (m_mode == APP_ESB_MODE_PTX) {
+            clear_retry_table();
+            m_current_tx_msg_id = 0;
+        }
+        pull_packet_from_tx_msgq();
+#endif
         return 0;
     } else {
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_USE_TIMESLOT)
         zmk_split_esb_timeslot_close_session();
+#else
+        m_active = false;
+        esb_disable();
+#endif
         return 0;
     }
 }
@@ -445,6 +472,7 @@ int zmk_split_esb_send(app_esb_data_t *tx_packet) {
     return ret;
 }
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_USE_TIMESLOT)
 static int app_esb_suspend(void) {
     m_active = false;
     if (m_mode == APP_ESB_MODE_PTX) {
@@ -506,6 +534,7 @@ static void on_timeslot_start_stop(zmk_split_esb_timeslot_callback_type_t type) 
             break;
     }
 }
+#endif
 
 static int on_activity_state(const zmk_event_t *eh) {
     struct zmk_activity_state_changed *state_ev = as_zmk_activity_state_changed(eh);
@@ -513,6 +542,7 @@ static int on_activity_state(const zmk_event_t *eh) {
         return 0;
     }
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_USE_TIMESLOT)
     if (m_mode == APP_ESB_MODE_PTX) {
         if (state_ev->state != ZMK_ACTIVITY_ACTIVE && m_enabled) {
             zmk_split_esb_set_enable(false);
@@ -521,6 +551,7 @@ static int on_activity_state(const zmk_event_t *eh) {
             zmk_split_esb_set_enable(true);
         }
     }
+#endif
 
     return 0;
 }

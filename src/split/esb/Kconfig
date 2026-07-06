@@ -86,6 +86,14 @@ config ZMK_SPLIT_ESB_AUTO_HEAL_KEY_POS_MAX
     help
         Central shield config, equals to number of keys in keymaps
 
+config ZMK_SPLIT_ESB_USE_TIMESLOT
+    bool "Use MPSL timeslot to schedule radio"
+    depends on BLE
+    select MPSL_ASSERT_HANDLER
+    help
+        When enabled, ESB has interrupted radio access with MPSL
+        timeslots. BLE can run simultaneously.
+
 config ZMK_SPLIT_ESB_TIMESLOT_REQUEST_TIMEOUT_US
     int "Timeout to grant the MPSL slot (default 1000 ms)"
     default 1000000
