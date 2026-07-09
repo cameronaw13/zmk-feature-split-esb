@@ -58,18 +58,22 @@ config ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS
 
 config ZMK_SPLIT_ESB_RETRY_INPUT_EVENT
     int "Retry count for input events"
+    default 1 if ZMK_SPLIT_ESB_RF_CH_HOP
     default 0
 
 config ZMK_SPLIT_ESB_RETRY_KEY_POSITION
     int "Retry count for key position events"
+    default ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT if ZMK_SPLIT_ESB_RF_CH_HOP
     default 3
 
 config ZMK_SPLIT_ESB_RETRY_SENSOR_EVENT
     int "Retry count for sensor events"
+    default ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT if ZMK_SPLIT_ESB_RF_CH_HOP
     default 2
 
 config ZMK_SPLIT_ESB_RETRY_BATTERY_EVENT
     int "Retry count for battery events"
+    default ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT if ZMK_SPLIT_ESB_RF_CH_HOP
     default 1
 
 config ZMK_SPLIT_ESB_RETRY_CMD
@@ -109,6 +113,24 @@ config ZMK_SPLIT_ESB_TIMESLOT_EXT_MARGIN_MARGIN
 config ZMK_SPLIT_ESB_TIMESLOT_REQ_EARLIEST_MARGIN
     int "Margin to submit a new MPSL timeslot request (default 2ms)"
     default 2000
+
+config ZMK_SPLIT_ESB_RF_CH_HOP
+    bool "Enable RF channel hopping"
+    default y
+    select SYS_HASH_MAP if ZMK_SPLIT_ESB_PERIPHERAL_COUNT < 1
+    select SYS_HASH_MAP_OA_LP if ZMK_SPLIT_ESB_PERIPHERAL_COUNT < 1
+
+config ZMK_SPLIT_ESB_RF_CH_HOP_CH_MIN
+    int "Minimum of RF channel among 2402–2480 MHz (default 2405MHz)"
+    default 5
+
+config ZMK_SPLIT_ESB_RF_CH_HOP_CH_STEP
+    int "Step of RF channel. (default 2405MHz + 9MHz on each hop)"
+    default 9
+
+config ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT 
+    int "Max hopping of RF channel. (default 2405MHz + 9MHz * 9 hop = 2477MHz)"
+    default 9
 
 module = ZMK_SPLIT_ESB
 module-str = ZMK_SPLIT_ESB

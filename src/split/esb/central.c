@@ -257,6 +257,11 @@ static void process_rx_work_cb(struct k_work *work) {
                 break;
             case -EAGAIN:
                 break;
+            case -EINVAL:
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP)
+                esb_rf_ch_hop();
+#endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP) */
+                break;
             default:
                 // LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
                 break;

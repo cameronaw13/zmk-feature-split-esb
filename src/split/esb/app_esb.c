@@ -50,6 +50,26 @@ uint8_t esb_addr_prefix[ADDR_PREFIX_LEN] = DT_INST_PROP(0, addr_prefix);
 #error "Need to create a node with compatible of 'zmk,esb-split` with `all `address` property set."
 #endif
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP)
+
+#include <zephyr/sys/util_macro.h>
+
+#define RF_CH_IDX(n, _) (CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP_CH_MIN + (n) * CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP_CH_STEP)
+static uint8_t esb_rf_ch[CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT] = {
+    LISTIFY(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT, RF_CH_IDX, (,))
+};
+
+static uint8_t esb_rf_ch_idx;
+
+uint8_t esb_rf_ch_hop() {
+    esb_rf_ch_idx = ++esb_rf_ch_idx % ARRAY_SIZE(esb_rf_ch);
+    LOG_DBG("%d", esb_rf_ch[esb_rf_ch_idx]);
+    esb_set_rf_channel(esb_rf_ch[esb_rf_ch_idx]);
+    return esb_rf_ch[esb_rf_ch_idx];
+}
+
+#endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP) */
+
 static app_esb_callback_t m_callback;
 
 // Track msgq full errors
@@ -199,6 +219,10 @@ static void event_handler(struct esb_evt const *event) {
                 LOG_WRN("Disposed payload form retry table after too much fail");
             }
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP)
+            esb_rf_ch_hop();
+#endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP) */
+
             esb_flush_tx();
             // Forward an event to the application
             m_event.evt_type = APP_ESB_EVT_TX_FAIL;
@@ -264,7 +288,7 @@ static int esb_initialize(app_esb_mode_t mode) {
     config.protocol = ESB_PROTOCOL_ESB_DPL;
     config.retransmit_delay = CONFIG_ZMK_SPLIT_ESB_PROTO_TX_RETRANSMIT_DELAY;
     config.retransmit_count = CONFIG_ZMK_SPLIT_ESB_PROTO_TX_RETRANSMIT_COUNT;
-    config.bitrate = ESB_BITRATE_2MBPS_BLE;
+    config.bitrate = ESB_BITRATE_2MBPS;
     config.use_fast_ramp_up = true;
     config.event_handler = event_handler;
     config.mode = (mode == APP_ESB_MODE_PTX) ? ESB_MODE_PTX : ESB_MODE_PRX;
@@ -275,6 +299,10 @@ static int esb_initialize(app_esb_mode_t mode) {
 #endif
 
     err = esb_init(&config);
+
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP)
+    esb_set_rf_channel(esb_rf_ch[esb_rf_ch_idx]);
+#endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP) */
 
     if (err) {
         return err;
