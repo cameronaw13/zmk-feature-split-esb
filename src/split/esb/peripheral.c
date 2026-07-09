@@ -231,7 +231,7 @@ static void process_rx_work_cb(struct k_work *work) {
             switch (item_err) {
             case 0:
                 if (env.payload.cmd.type == ZMK_SPLIT_TRANSPORT_CENTRAL_CMD_TYPE_POLL_EVENTS) {
-                    begin_tx();
+                    // begin_tx(); // NOTE: Shall NOT be called from central due to ESB natural.
                     break;
                 }
                 if (env.payload.source != peripheral_id) {

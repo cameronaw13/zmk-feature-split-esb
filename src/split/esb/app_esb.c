@@ -199,7 +199,7 @@ static void event_handler(struct esb_evt const *event) {
                 LOG_WRN("Disposed payload form retry table after too much fail");
             }
 
-            // esb_flush_tx(); // DOUH, had fixed @ 3.1.0-rc1, not ready yet.
+            esb_flush_tx();
             // Forward an event to the application
             m_event.evt_type = APP_ESB_EVT_TX_FAIL;
             m_callback(&m_event);
@@ -324,8 +324,8 @@ static int pull_packet_from_tx_msgq(void) {
             // LOG_WRN("esb_tx_fifo: queue full %d", que_was_fulled);
             // force dequeue, guarding for phantom PRX.
             que_was_fulled++;
+            esb_flush_tx();
             if (que_was_fulled >= ESB_TX_FIFO_REQUE_MAX) {
-                esb_flush_tx();
                 // dequeue FIFO msg
                 k_msgq_get(&m_msgq_tx_payloads, &tx_payload, K_NO_WAIT);
             }
