@@ -63,7 +63,7 @@ static uint8_t esb_rf_ch_idx;
 
 uint8_t esb_rf_ch_hop() {
     esb_rf_ch_idx = ++esb_rf_ch_idx % ARRAY_SIZE(esb_rf_ch);
-    LOG_DBG("%d", esb_rf_ch[esb_rf_ch_idx]);
+    LOG_DBG("rf ch: %d", esb_rf_ch[esb_rf_ch_idx]);
     esb_set_rf_channel(esb_rf_ch[esb_rf_ch_idx]);
     return esb_rf_ch[esb_rf_ch_idx];
 }
@@ -191,7 +191,7 @@ static void event_handler(struct esb_evt const *event) {
             pull_packet_from_tx_msgq();
             break;
         case ESB_EVENT_TX_FAILED:
-            LOG_WRN("TX FAILED, tx_attempts: %d", event->tx_attempts);
+            // LOG_WRN("TX FAILED, tx_attempts: %d", event->tx_attempts);
             // Check retry count for failed message
             uint8_t retry_left = decrement_retry_by_msg_id(m_current_tx_msg_id);
             LOG_WRN("Retry left for msg %d: %d", m_current_tx_msg_id, retry_left);
@@ -203,7 +203,7 @@ static void event_handler(struct esb_evt const *event) {
                 if (get_retry_payload_by_msg_id(m_current_tx_msg_id, &retry_payload)) {
                     int requeue_ret = k_msgq_put(&m_msgq_tx_payloads, &retry_payload, K_NO_WAIT);
                     if (requeue_ret == -ENOMSG) {
-                        LOG_WRN("Msgq full, cannot re-queue payload from retry table");
+                        LOG_DBG("Msgq full, cannot re-queue payload from retry table");
                         dispose_msg = true;
                     }
                 } else {
@@ -216,7 +216,7 @@ static void event_handler(struct esb_evt const *event) {
                 // Clear retry entry for the message that should give up retry
                 remove_retry_entry_by_msg_id(m_current_tx_msg_id);
                 m_current_tx_msg_id = 0;
-                LOG_WRN("Disposed payload form retry table after too much fail");
+                LOG_DBG("Disposed payload form retry table after too much fail");
             }
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP)

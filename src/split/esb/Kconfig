@@ -56,24 +56,71 @@ config ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS
     int "Number of central commands to buffer for TX/RX"
     default 32
 
+config ZMK_SPLIT_ESB_RF_CH_HOP
+    bool "Enable RF channel hopping"
+    default y
+    help
+      When enabled, both TX and RX sides jump to the next
+      pre-computed RF channel after TX attempts failure or corrupted
+      RX data, allowing the link to recover from interference
+      without disconnecting.
+
+config ZMK_SPLIT_ESB_RF_CH_HOP_CH_MIN
+    int "Minimum of RF channel offset for 2Mbps ESB (2400 MHz + value)"
+    default 5
+    range 2 80
+    help
+      Sets the lower boundary channel for the ESB frequency hopping pool.
+      When using ESB_BITRATE_2MBPS, the channel range is strictly limited 
+      to 2 (2402 MHz) through 80 (2480 MHz) to comply with regulatory 
+      bandwidth requirements (FCC/ETSI) and prevent out-of-band emissions.
+
+config ZMK_SPLIT_ESB_RF_CH_HOP_CH_STEP
+    int "Additional RF channel for each step of hopping (default +18 MHz)"
+    default 18
+    help
+      The number of channels the radio skips during each frequency hop.
+      For example, a step of 18 changes the carrier frequency by 18 MHz.
+
+config ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT 
+    int "Number of channels in hopping sequence (default max 2477 MHz)"
+    default 4
+    help
+      The total number of unique frequency hops in the rotation sequence.
+      With a default minimum channel of 5 and a step size of 18, 4 hops 
+      will utilize channels 5, 23, 41, 59, and 77 (max frequency 2477 MHz)
+      before wraps back to the first channel.
+
+config ZMK_SPLIT_ESB_RF_CH_HOP_EVT_RETRY
+    int "Channel hop retry limit for loss-sensitive peripheral events"
+    default 6 if ZMK_SPLIT_ESB_RF_CH_HOP
+    default 0
+    help
+      The maximum number of channel hops attempted for loss-sensitive 
+      peripheral data (such as keystrokes). If the built-in ESB 
+      retransmissions fail on the current frequency, this value 
+      defines how many subsequent channel hops the system will 
+      execute to try and deliver the packet.
+      Default 2 plus ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT for wrapping back
+      after go thru full channels.
+
 config ZMK_SPLIT_ESB_RETRY_INPUT_EVENT
     int "Retry count for input events"
-    default 1 if ZMK_SPLIT_ESB_RF_CH_HOP
     default 0
 
 config ZMK_SPLIT_ESB_RETRY_KEY_POSITION
     int "Retry count for key position events"
-    default ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT if ZMK_SPLIT_ESB_RF_CH_HOP
+    default ZMK_SPLIT_ESB_RF_CH_HOP_EVT_RETRY if ZMK_SPLIT_ESB_RF_CH_HOP_EVT_RETRY > 0
     default 3
 
 config ZMK_SPLIT_ESB_RETRY_SENSOR_EVENT
     int "Retry count for sensor events"
-    default ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT if ZMK_SPLIT_ESB_RF_CH_HOP
+    default ZMK_SPLIT_ESB_RF_CH_HOP_EVT_RETRY if ZMK_SPLIT_ESB_RF_CH_HOP_EVT_RETRY > 0
     default 2
 
 config ZMK_SPLIT_ESB_RETRY_BATTERY_EVENT
     int "Retry count for battery events"
-    default ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT if ZMK_SPLIT_ESB_RF_CH_HOP
+    default ZMK_SPLIT_ESB_RF_CH_HOP_EVT_RETRY if ZMK_SPLIT_ESB_RF_CH_HOP_EVT_RETRY > 0
     default 1
 
 config ZMK_SPLIT_ESB_RETRY_CMD
@@ -113,24 +160,6 @@ config ZMK_SPLIT_ESB_TIMESLOT_EXT_MARGIN_MARGIN
 config ZMK_SPLIT_ESB_TIMESLOT_REQ_EARLIEST_MARGIN
     int "Margin to submit a new MPSL timeslot request (default 2ms)"
     default 2000
-
-config ZMK_SPLIT_ESB_RF_CH_HOP
-    bool "Enable RF channel hopping"
-    default y
-    select SYS_HASH_MAP if ZMK_SPLIT_ESB_PERIPHERAL_COUNT < 1
-    select SYS_HASH_MAP_OA_LP if ZMK_SPLIT_ESB_PERIPHERAL_COUNT < 1
-
-config ZMK_SPLIT_ESB_RF_CH_HOP_CH_MIN
-    int "Minimum of RF channel among 2402–2480 MHz (default 2405MHz)"
-    default 5
-
-config ZMK_SPLIT_ESB_RF_CH_HOP_CH_STEP
-    int "Step of RF channel. (default 2405MHz + 9MHz on each hop)"
-    default 9
-
-config ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT 
-    int "Max hopping of RF channel. (default 2405MHz + 9MHz * 9 hop = 2477MHz)"
-    default 9
 
 module = ZMK_SPLIT_ESB
 module-str = ZMK_SPLIT_ESB

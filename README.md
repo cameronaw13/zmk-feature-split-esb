@@ -126,14 +126,52 @@ CONFIG_ZMK_SPLIT_ESB_PROTO_MSGQ_ITEMS=64
 CONFIG_ZMK_SPLIT_ESB_EVENT_BUFFER_ITEMS=64
 CONFIG_ZMK_SPLIT_ESB_CMD_BUFFER_ITEMS=16
 
+# Enable RF channel hopping to mitigate interference (default y)
+# NOTE: Both TX and RX sides jump to the next pre-computed RF channel
+#       after TX attempts failure or corrupted RX data, allowing the
+#       link to recover from interference without disconnecting.
+CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP=y
+
+# Minimum RF channel offset for 2Mbps ESB (2400 MHz + value)
+# NOTE: Sets the lower boundary channel for the ESB frequency hopping pool.
+#       When using ESB_BITRATE_2MBPS, the channel range is strictly limited
+#       to 2 (2402 MHz) through 80 (2480 MHz) to comply with regulatory
+#       bandwidth requirements (FCC/ETSI) and prevent out-of-band emissions.
+CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP_CH_MIN=5
+
+# Additional RF channel for each step of hopping (default +18 MHz)
+# NOTE: The number of channels the radio skips during each frequency hop.
+#       For example, a step of 18 changes the carrier frequency by 18 MHz.
+CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP_CH_STEP=18
+
+# Number of channels in hopping sequence (default max 2477 MHz)
+# NOTE: The total number of unique frequency hops in the rotation sequence.
+#       With a default minimum channel of 5 and a step size of 18, 4 hops
+#       will utilize channels 5, 23, 41, 59, and 77 (max frequency 2477 MHz)
+#       before wrapping back to the first channel.
+CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT=4
+
+# Channel hop retry limit for loss-sensitive peripheral events
+# Default 6 when RF_CH_HOP is enabled, 0 when disabled
+# NOTE: The maximum number of channel hops attempted for loss-sensitive
+#       peripheral data (such as keystrokes). If the built-in ESB
+#       retransmissions fail on the current frequency, this value
+#       defines how many subsequent channel hops the system will
+#       execute to try and deliver the packet.
+#       Default 2 plus ZMK_SPLIT_ESB_RF_CH_HOP_CH_COUNT for wrapping back
+#       after going through full channels.
+CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP_EVT_RETRY=6
+
 # Retry counts for event/command types (0 = no retry, default varies)
+# NOTE: KEY_POSITION, SENSOR_EVENT, BATTERY_EVENT default to
+#       ZMK_SPLIT_ESB_RF_CH_HOP_EVT_RETRY (if > 0) when hopping is enabled
 # Input events (key presses): 0 retry - allowing lossful cursor inputs
 CONFIG_ZMK_SPLIT_ESB_RETRY_INPUT_EVENT=0
-# Key position events: 3 retries - reduce key press loss
+# Key position events: 3 retries (or EVT_RETRY if hopping enabled) - reduce key press loss
 CONFIG_ZMK_SPLIT_ESB_RETRY_KEY_POSITION=3
-# Sensor events: 2 retries
+# Sensor events: 2 retries (or EVT_RETRY if hopping enabled)
 CONFIG_ZMK_SPLIT_ESB_RETRY_SENSOR_EVENT=2
-# Battery events: 1 retry
+# Battery events: 1 retry (or EVT_RETRY if hopping enabled)
 CONFIG_ZMK_SPLIT_ESB_RETRY_BATTERY_EVENT=1
 # Central commands: 1 retry - reduce loss for CPI toggle behavior
 CONFIG_ZMK_SPLIT_ESB_RETRY_CMD=1
