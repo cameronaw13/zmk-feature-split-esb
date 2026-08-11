@@ -181,7 +181,6 @@ static void event_handler(struct esb_evt const *event) {
     switch (event->evt_id) {
         case ESB_EVENT_TX_SUCCESS:
             // LOG_DBG("TX SUCCESS, tx_attempts: %d", event->tx_attempts);
-            // LOG_DBG("give d1");
             // Clear retry entry for the message that succeeded
             remove_retry_entry_by_msg_id(m_current_tx_msg_id);
             m_current_tx_msg_id = 0;
@@ -244,6 +243,9 @@ static void event_handler(struct esb_evt const *event) {
                 m_event.buf = buf;
                 m_event.data_length = rx_payload.length;
                 m_callback(&m_event);
+            }
+            if (m_mode == APP_ESB_MODE_PRX) {
+              pull_packet_from_tx_msgq();
             }
             break;
     }
@@ -341,7 +343,7 @@ static int pull_packet_from_tx_msgq(void) {
     struct esb_payload tx_payload;
     static uint8_t que_was_fulled = 0;
 
-    if (!esb_is_idle()) {
+    if (!esb_is_idle() && m_mode == APP_ESB_MODE_PTX) {
         return -EBUSY;
     }
 
@@ -382,16 +384,18 @@ static int pull_packet_from_tx_msgq(void) {
 
         } else {
             // LOG_DBG("Payload len: %d", tx_payload.length);
-            esb_ret = esb_start_tx();
-            if (esb_ret == -EBUSY) {
-                LOG_DBG("ESB busy, will retry on next event");
-                return -EBUSY;
-            } else if (esb_ret == -ENODATA) {
-                LOG_DBG("ESB TX FIFO empty");
-                return 0;
-            } else if (esb_ret < 0) {
-                LOG_ERR("esb_start_tx failed (%d)", esb_ret);
-                return esb_ret;
+            if (m_mode == APP_ESB_MODE_PTX) {
+                esb_ret = esb_start_tx();
+                if (esb_ret == -EBUSY) {
+                    LOG_DBG("ESB busy, will retry on next event");
+                    return -EBUSY;
+                } else if (esb_ret == -ENODATA) {
+                    LOG_DBG("ESB TX FIFO empty");
+                    return 0;
+                } else if (esb_ret < 0) {
+                    LOG_ERR("esb_start_tx failed (%d)", esb_ret);
+                    return esb_ret;
+                }
             }
             k_msgq_get(&m_msgq_tx_payloads, &tx_payload, K_NO_WAIT);
             // LOG_INF("TX evt_msg_id: %d", m_current_tx_msg_id);

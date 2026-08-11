@@ -133,6 +133,8 @@ static int split_central_esb_send_command(uint8_t source,
         LOG_WRN("Failed to put the meta (%d vs %d)", put, sizeof(meta));
     }
 
+    state.tx_pipe = source % CONFIG_ESB_PIPE_COUNT;
+
     begin_tx();
 
     return 0;
