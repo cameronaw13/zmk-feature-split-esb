@@ -160,7 +160,7 @@ config ZMK_SPLIT_ESB_DIAG_RX_TRACE
       debug log and warns hwen a pipe's PID repeats. Includes
       delta needed to tell a hardware transmit from a legitimate
       packet PID wrap.
-      Enable only for targeted debugging.
+      Enable only for targeted log-heavy debugging.
 
 config ZMK_SPLIT_ESB_USE_TIMESLOT
     bool "Use MPSL timeslot to schedule radio"

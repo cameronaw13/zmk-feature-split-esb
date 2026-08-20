@@ -176,6 +176,12 @@ static bool m_enabled = false;
 
 static int pull_packet_from_tx_msgq(void);
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_DIAG_RX_TRACE)
+static uint8_t diag_rx_last_pid[CONFIG_ESB_PIPE_COUNT];
+static uint32_t diag_rx_last_cycles[CONFIG_ESB_PIPE_COUNT];
+static bool diag_rx_have_last[CONFIG_ESB_PIPE_COUNT];
+#endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_DIAG_RX_TRACE) */
+
 static void event_handler(struct esb_evt const *event) {
     app_esb_event_t m_event;
     switch (event->evt_id) {
@@ -232,8 +238,22 @@ static void event_handler(struct esb_evt const *event) {
             // LOG_DBG("RX SUCCESS");
             struct esb_payload rx_payload;
             while (esb_read_rx_payload(&rx_payload) == 0) {
-                // LOG_DBG("Chunk %d, pipe: %d, len: %d", 
-                //     rx_payload.pid, rx_payload.pipe, rx_payload.length);
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_DIAG_RX_TRACE)
+                LOG_DBG("Chunk %d, pipe: %d, len: %d", 
+                     rx_payload.pid, rx_payload.pipe, rx_payload.length);
+                uint32_t now_cycles = k_cycle_get_32();
+                uint8_t pipe = rx_payload.pipe;
+                if (diag_rx_have_last[pipe] && diag_rx_last_pid[pipe] == rx_payload.pid) {
+                    uint32_t delta_cycles = now_cycles - diag_rx_last_cycles[pipe];
+                    uint32_t delta_us = (uint32_t)((uint64_t)delta_cycles * 1000000ULL
+                                                    / sys_clock_hw_cycles_per_sec());
+                    LOG_WRN("Pipe %d PID %d repeat, delta %u µs",
+                            pipe, rx_payload.pid, delta_us);
+                }
+                diag_rx_last_pid[pipe] = rx_payload.pid;
+                diag_rx_last_cycles[pipe] = now_cycles;
+                diag_rx_have_last[pipe] = true;
+#endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_DIAG_RX_TRACE) */
                 uint8_t buf[CONFIG_ESB_MAX_PAYLOAD_LENGTH];
                 memcpy(buf, rx_payload.data, rx_payload.length);
                 // LOG_DBG("Packet len: %d", rx_payload.length);
