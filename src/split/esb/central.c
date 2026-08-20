@@ -29,6 +29,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_SPLIT_ESB_LOG_LEVEL);
 
 #include "app_esb.h"
 #include "common.h"
+#include <zephyr/kernel.h>
 
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_MSG_POSTFIX_CRC)
 #define TX_BUFFER_SIZE (sizeof(struct esb_command_envelope) + sizeof(struct esb_msg_postfix))
@@ -213,7 +214,29 @@ SYS_INIT(zmk_split_esb_central_init, APPLICATION, CONFIG_KERNEL_INIT_PRIORITY_DE
 
 extern const struct zmk_split_transport_central *active_transport;
 
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_DIAG_RX_GAP)
+  static uint32_t diag_rx_last_cycles;
+  static bool diag_rx_have_last;
+#endif
+
+static uint32_t diag_eagain_spins;
+static int64_t diag_eagain_last_log_ms;
+
 static void process_rx_work_cb(struct k_work *work) {
+#if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_DIAG_RX_GAP)
+        uint32_t now_cycles = k_cycle_get_32();
+        if (diag_rx_have_last) {
+            uint32_t delta_cycles = now_cycles - diag_rx_last_cycles;
+            uint32_t gap_us = (uint32_t)((uint64_t)delta_cycles * 1000000ULL
+                                        / sys_clock_hw_cycles_per_sec());
+            if (gap_us > CONFIG_ZMK_SPLIT_ESB_DIAG_RX_GAP_US) {
+                LOG_WRN("RX gap %u us", gap_us);
+            }
+        }
+        diag_rx_last_cycles = now_cycles;
+        diag_rx_have_last = true;
+#endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_DIAG_RX_GAP) */
+      
     for (int pipe = 0; pipe < CONFIG_ESB_PIPE_COUNT; pipe++) {
         struct ring_buf *rx_buf = &state.rx_bufs[pipe];
         while (ring_buf_size_get(rx_buf) > ESB_MSG_EXTRA_SIZE) {
@@ -257,12 +280,23 @@ static void process_rx_work_cb(struct k_work *work) {
                 zmk_split_transport_central_peripheral_event_handler(
                     &esb_central, env.payload.source, env.payload.event);
                 break;
-            case -EAGAIN:
+            case -EAGAIN: {
+                diag_eagain_spins++;
+                int64_t now_ms = k_uptime_get();
+                if (now_ms - diag_eagain_last_log_ms >= 1000) {
+                    if (diag_eagain_spins > 1) {
+                        LOG_WRN("EAGAIN spins: %u", diag_eagain_spins);
+                    }
+                    diag_eagain_spins = 0;
+                    diag_eagain_last_log_ms = now_ms;
+                }
                 break;
+            }
             case -EINVAL:
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP)
                 esb_rf_ch_hop();
 #endif /* IS_ENABLED(CONFIG_ZMK_SPLIT_ESB_RF_CH_HOP) */
+                LOG_WRN("RX -EINVAL on pipe %d, channel-hopping", pipe);
                 break;
             default:
                 // LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);

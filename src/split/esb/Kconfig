@@ -137,6 +137,31 @@ config ZMK_SPLIT_ESB_AUTO_HEAL_KEY_POS_MAX
     help
         Central shield config, equals to number of keys in keymaps
 
+config ZMK_SPLIT_ESB_DIAG_RX_GAP
+    bool "Log central RX gaps that exceed a threshold"
+    default n
+    help
+        Warns when time between RX-processing exceeds
+        ZMK_SPLIT_ESB_DIAG_RX_GAP_US. Used to check whether
+        central-side RX unavailability lines up with bilateral
+        key-event disposals.
+        Enable only for debugging.
+
+config ZMK_SPLIT_ESB_DIAG_RX_GAP_US
+    int "RX gap warning threshold (µs)"
+    default 20000
+    depends on ZMK_SPLIT_ESB_DIAG_RX_GAP
+
+config ZMK_SPLIT_ESB_DIAG_RX_TRACE
+    bool "Trace per-pipe PID and warn on repeat"
+    default n
+    help
+      Runs in ESB RX ISR context. Restores per-chunk pipe/PID
+      debug log and warns hwen a pipe's PID repeats. Includes
+      delta needed to tell a hardware transmit from a legitimate
+      packet PID wrap.
+      Enable only for targeted debugging.
+
 config ZMK_SPLIT_ESB_USE_TIMESLOT
     bool "Use MPSL timeslot to schedule radio"
     depends on BLE
